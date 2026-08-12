@@ -5,6 +5,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import database.MongoDBConnection;
+import model.User;
+import service.UserService;
+
 
 public class ClientHandler implements Runnable {
 
@@ -15,9 +19,12 @@ public class ClientHandler implements Runnable {
 
     private String username;
 
+    private final UserService userService;
+
     public ClientHandler(Socket clientSocket) {
 
         this.clientSocket = clientSocket;
+        this.userService = new UserService();
     }
 
     @Override
@@ -36,59 +43,230 @@ public class ClientHandler implements Runnable {
                     true
             );
 
-            // Ask for username
-            sendMessage(
-                    "USERNAME_REQUEST"
-            );
+// ================================
+// AUTHENTICATION
+// ================================
 
-            username = input.readLine();
+                boolean authenticated = false;
 
-            if (username == null ||
-                    username.trim().isEmpty()) {
+                while (!authenticated) {
 
                 sendMessage(
-                        "ERROR: Username cannot be empty."
+                        "AUTH_REQUEST"
                 );
 
-                closeConnection();
+                String authChoice = input.readLine();
 
-                return;
-            }
+                if (authChoice == null) {
 
-            username = username.trim();
+                        closeConnection();
 
-            // Check username
-            if (!ChatServer.addOnlineUser(
-                    username,
-                    this)) {
+                        return;
+                }
 
-                sendMessage(
-                        "ERROR: Username already online."
-                );
+                authChoice = authChoice.trim()
+                        .toLowerCase();
 
-                closeConnection();
+                // ================================
+                // REGISTER
+                // ================================
 
-                return;
-            }
+                if (authChoice.equals("register")) {
 
-            sendMessage(
-                    "LOGIN_SUCCESS: Welcome "
-                            + username
-                            + "!"
-            );
+                        sendMessage(
+                                "USERNAME_REQUEST"
+                        );
 
-            ChatServer.broadcastMessage(
-                    "SYSTEM: "
-                            + username
-                            + " joined the chat.",
-                    this
-            );
+                        String registerUsername =
+                                input.readLine();
 
-            ChatServer.sendOnlineUsers(
-                    this
-            );
+                        if (registerUsername == null ||
+                                registerUsername.trim().isEmpty()) {
 
-            String message;
+                        sendMessage(
+                                "ERROR: Username cannot be empty."
+                        );
+
+                        continue;
+                        }
+
+                        registerUsername =
+                                registerUsername.trim();
+
+                        sendMessage(
+                                "EMAIL_REQUEST"
+                        );
+
+                        String email =
+                                input.readLine();
+
+                        if (email == null ||
+                                email.trim().isEmpty()) {
+
+                        sendMessage(
+                                "ERROR: Email cannot be empty."
+                        );
+
+                        continue;
+                        }
+
+                        email = email.trim();
+
+                        sendMessage(
+                                "PASSWORD_REQUEST"
+                        );
+
+                        String password =
+                                input.readLine();
+
+                        if (password == null ||
+                                password.isEmpty()) {
+
+                        sendMessage(
+                                "ERROR: Password cannot be empty."
+                        );
+
+                        continue;
+                        }
+
+                        User newUser =
+                                new User(
+                                        registerUsername,
+                                        password,
+                                        email
+                                );
+
+                        boolean registered =
+                                userService.registerUser(
+                                        newUser
+                                );
+
+                        if (registered) {
+
+                        sendMessage(
+                                "REGISTER_SUCCESS: "
+                                        + "Registration successful. "
+                                        + "Please login."
+                        );
+
+                        } else {
+
+                        sendMessage(
+                                "REGISTER_FAILED: "
+                                        + "Username already exists."
+                        );
+                        }
+                }
+
+                // ================================
+                // LOGIN
+                // ================================
+
+                else if (authChoice.equals("login")) {
+
+                        sendMessage(
+                                "USERNAME_REQUEST"
+                        );
+
+                        String loginUsername =
+                                input.readLine();
+
+                        if (loginUsername == null ||
+                                loginUsername.trim().isEmpty()) {
+
+                        sendMessage(
+                                "ERROR: Username cannot be empty."
+                        );
+
+                        continue;
+                        }
+
+                        loginUsername =
+                                loginUsername.trim();
+
+                        sendMessage(
+                                "PASSWORD_REQUEST"
+                        );
+
+                        String password =
+                                input.readLine();
+
+                        if (password == null ||
+                                password.isEmpty()) {
+
+                        sendMessage(
+                                "ERROR: Password cannot be empty."
+                        );
+
+                        continue;
+                        }
+
+                        // Check MongoDB
+                        User loggedInUser =
+                                userService.loginUser(
+                                        loginUsername,
+                                        password
+                                );
+
+                        if (loggedInUser == null) {
+
+                        sendMessage(
+                                "LOGIN_FAILED: "
+                                        + "Invalid username or password."
+                        );
+
+                        continue;
+                        }
+
+                        // Check whether user is already online
+                        if (!ChatServer.addOnlineUser(
+                                loginUsername,
+                                this)) {
+
+                        sendMessage(
+                                "ERROR: Username already online."
+                        );
+
+                        continue;
+                        }
+
+                        // Authentication successful
+                        username = loginUsername;
+
+                        authenticated = true;
+
+                        sendMessage(
+                                "LOGIN_SUCCESS: Welcome "
+                                        + username
+                                        + "!"
+                        );
+
+                        ChatServer.broadcastMessage(
+                                "SYSTEM: "
+                                        + username
+                                        + " joined the chat.",
+                                this
+                        );
+
+                        ChatServer.sendOnlineUsers(
+                                this
+                        );
+                }
+
+                else {
+
+                        sendMessage(
+                                "ERROR: Please choose "
+                                        + "LOGIN or REGISTER."
+                        );
+                }
+                }
+
+                // ================================
+                // START CHAT
+                // ================================
+
+                String message;
 
             // Message loop
             while ((message = input.readLine()) != null) {
@@ -424,26 +602,23 @@ public class ClientHandler implements Runnable {
                         groupMessage
                 );
 
-        if (sent) {
+                if (sent) {
 
-            sendMessage(
-                    "GROUP ["
-                            + groupName
-                            + "] You: "
-                            + groupMessage
-            );
+                sendMessage(
+                        "GROUP ["
+                                + groupName
+                                + "] You: "
+                                + groupMessage
+                );
 
-        } 
-        else 
-        {
+                } else {
 
-            sendMessage(
-                    "SYSTEM: You cannot send messages to '"
-                            + groupName
-                            + "'. "
-                            + "You are not a member."
-            );
-        }
+                sendMessage(
+                        "SYSTEM: You cannot send messages to group '"
+                                + groupName
+                                + "'."
+                );
+                }
     }
 
     // =====================================================

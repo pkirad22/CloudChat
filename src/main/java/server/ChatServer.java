@@ -6,6 +6,7 @@ import java.net.Socket;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import database.MongoDBConnection;
 
 public class ChatServer {
 
@@ -28,6 +29,9 @@ public class ChatServer {
         System.out.println("=================================");
         System.out.println("       CloudChat Server");
         System.out.println("=================================");
+
+        // Connect to MongoDB
+        MongoDBConnection.connect();
 
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
 
@@ -227,30 +231,48 @@ public class ChatServer {
     /*
      * Remove a user from a group.
      */
-    public static boolean leaveGroup(
-            String groupName,
-            ClientHandler client) {
+public static boolean leaveGroup(
+        String groupName,
+        ClientHandler client) {
 
         Set<ClientHandler> members =
                 groups.get(groupName);
 
+        // Group doesn't exist
         if (members == null) {
-
-            return false;
+                return false;
         }
 
+        // User isn't a member
+        if (!members.contains(client)) {
+                return false;
+        }
+
+        // Remove user
         members.remove(client);
 
+        System.out.println(
+                client.getUsername()
+                        + " left group "
+                        + groupName
+        );
+
         /*
-         * Delete empty group.
-         */
+        * Delete group if nobody is left.
+        */
         if (members.isEmpty()) {
 
-            groups.remove(groupName);
+                groups.remove(groupName);
+
+                System.out.println(
+                        "Group "
+                                + groupName
+                                + " deleted because it is empty."
+                );
         }
 
         return true;
-    }
+        }
 
     /*
      * Send message to group.
@@ -258,40 +280,42 @@ public class ChatServer {
 public static boolean sendGroupMessage(
         String groupName,
         ClientHandler sender,
-        String message) 
-    {
+        String message) {
 
-        Set<ClientHandler> members =
-                groups.get(groupName);
+    Set<ClientHandler> members = groups.get(groupName);
 
-        // Group does not exist
-        if (members == null) {
-            return false;
-        }
-
-        // Sender is NOT a member of the group
-        if (!members.contains(sender)) {
-            return false;
-        }
-
-        // Sender is a valid group member
-        for (ClientHandler member : members) {
-
-            if (member != sender) {
-
-                member.sendMessage(
-                        "GROUP ["
-                                + groupName
-                                + "] "
-                                + sender.getUsername()
-                                + ": "
-                                + message
-                );
-            }
-        }
-
-        return true;
+    // Group does not exist
+    if (members == null) {
+        return false;
     }
+
+    /*
+     * IMPORTANT:
+     * The sender must actually be a member
+     * of this group.
+     */
+    if (!members.contains(sender)) {
+        return false;
+    }
+
+    // Send message only to group members
+    for (ClientHandler member : members) {
+
+        if (member != sender) {
+
+            member.sendMessage(
+                    "GROUP ["
+                            + groupName
+                            + "] "
+                            + sender.getUsername()
+                            + ": "
+                            + message
+            );
+        }
+    }
+
+    return true;
+}
 
     /*
      * Send list of available groups.
