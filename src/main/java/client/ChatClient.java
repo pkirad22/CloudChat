@@ -7,741 +7,750 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.Scanner;
 
+import java.io.DataInputStream;
+import java.io.FileOutputStream;
+import java.io.File;
+import java.net.Socket;
+
 public class ChatClient {
 
-    private static final String SERVER_ADDRESS =
-            "localhost";
+        private static final String SERVER_ADDRESS = "localhost";
 
-    private static final int SERVER_PORT = 5000;
+        private static final int SERVER_PORT = 5000;
 
-    public static void main(String[] args) {
-
-        System.out.println(
-                "================================="
-        );
-
-        System.out.println(
-                "        CloudChat Client"
-        );
-
-        System.out.println(
-                "================================="
-        );
-
-        try {
-
-            Socket socket =
-                    new Socket(
-                            SERVER_ADDRESS,
-                            SERVER_PORT
-                    );
-
-            System.out.println(
-                    "Connected to CloudChat Server."
-            );
-
-            BufferedReader serverInput =
-                    new BufferedReader(
-                            new InputStreamReader(
-                                    socket.getInputStream()
-                            )
-                    );
-
-            PrintWriter serverOutput =
-                    new PrintWriter(
-                            socket.getOutputStream(),
-                            true
-                    );
-
-            Scanner scanner =
-                    new Scanner(System.in);
-
-            // =================================
-            // AUTHENTICATION
-            // =================================
-
-            boolean authenticated =
-                    authenticate(
-                            serverInput,
-                            serverOutput,
-                            scanner
-                    );
-
-            if (!authenticated) {
-
-                socket.close();
+        public static void main(String[] args) {
 
                 System.out.println(
-                        "Disconnected from server."
-                );
+                                "=================================");
 
-                return;
-            }
+                System.out.println(
+                                "        CloudChat Client");
 
-            // =================================
-            // RECEIVE MESSAGES FROM SERVER
-            // =================================
+                System.out.println(
+                                "=================================");
 
-            Thread receiveThread =
-                    new Thread(() -> {
+                try {
+
+                        Socket socket = new Socket(
+                                        SERVER_ADDRESS,
+                                        SERVER_PORT);
+
+                        System.out.println(
+                                        "Connected to CloudChat Server.");
+
+                        BufferedReader serverInput = new BufferedReader(
+                                        new InputStreamReader(
+                                                        socket.getInputStream()));
+
+                        PrintWriter serverOutput = new PrintWriter(
+                                        socket.getOutputStream(),
+                                        true);
+
+                        Scanner scanner = new Scanner(System.in);
+
+                        // =================================
+                        // AUTHENTICATION
+                        // =================================
+
+                        boolean authenticated = authenticate(
+                                        serverInput,
+                                        serverOutput,
+                                        scanner);
+
+                        if (!authenticated) {
+
+                                socket.close();
+
+                                System.out.println(
+                                                "Disconnected from server.");
+
+                                return;
+                        }
+
+                        // =================================
+                        // RECEIVE MESSAGES FROM SERVER
+                        // =================================
+
+                        Thread receiveThread = new Thread(() -> {
+
+                                try {
+
+                                        String serverMessage;
+
+                                        while ((serverMessage = serverInput.readLine()) != null) {
+
+                                                System.out.println();
+
+                                                System.out.println(
+                                                                formatServerMessage(serverMessage));
+
+                                                if (serverMessage.startsWith("FILE_INCOMING:")) {
+
+                                                        System.out.println(
+                                                                        "Preparing to receive file...");
+
+                                                        receiveFile();
+                                                }
+
+                                                System.out.print("You: ");
+                                        }
+
+                                } catch (IOException e) {
+
+                                        System.out.println();
+
+                                        System.out.println(
+                                                        "Connection to server lost.");
+                                }
+                        });
+
+                        receiveThread.start();
+
+                        // =================================
+                        // COMMAND MENU
+                        // =================================
+
+                        printCommandMenu();
+
+                        // =================================
+                        // SEND MESSAGES
+                        // =================================
+
+                        while (true) {
+
+                                System.out.print("You: ");
+
+                                if (!scanner.hasNextLine()) {
+                                        break;
+                                }
+
+                                String message = scanner.nextLine();
+
+                                if (message == null) {
+                                        break;
+                                }
+
+                                serverOutput.println(message);
+
+                                if (message.equalsIgnoreCase("/exit")) {
+                                        break;
+                                }
+                        }
+                        socket.close();
+
+                        System.out.println(
+                                        "Disconnected from server.");
+
+                } catch (IOException e) {
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "Unable to connect to server.");
+
+                        System.out.println(
+                                        "Error: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================
+        // AUTHENTICATION METHOD
+        // =========================================
+
+        private static boolean authenticate(
+                        BufferedReader serverInput,
+                        PrintWriter serverOutput,
+                        Scanner scanner) {
+
+                while (true) {
 
                         try {
 
-                            String serverMessage;
+                                /*
+                                 * Server first sends:
+                                 *
+                                 * AUTH_REQUEST
+                                 */
 
-                            while ((serverMessage =
-                                    serverInput.readLine())
-                                    != null) {
+                                String authRequest = serverInput.readLine();
+
+                                if (authRequest == null) {
+
+                                        System.out.println(
+                                                        "Server disconnected.");
+
+                                        return false;
+                                }
+
+                                if (!authRequest.equals(
+                                                "AUTH_REQUEST")) {
+
+                                        System.out.println(
+                                                        "Unexpected server response: "
+                                                                        + authRequest);
+
+                                        return false;
+                                }
+
+                                // =================================
+                                // LOGIN MENU
+                                // =================================
 
                                 System.out.println();
 
                                 System.out.println(
-                                        formatServerMessage(
-                                                serverMessage
-                                        )
-                                );
+                                                "=================================");
+
+                                System.out.println(
+                                                "        CLOUDCHAT LOGIN");
+
+                                System.out.println(
+                                                "=================================");
+
+                                System.out.println(
+                                                "1. Login");
+
+                                System.out.println(
+                                                "2. Register");
+
+                                System.out.println(
+                                                "3. Exit");
+
+                                System.out.println(
+                                                "=================================");
 
                                 System.out.print(
-                                        "You: "
-                                );
-                            }
+                                                "Enter choice: ");
+
+                                String choice = scanner.nextLine()
+                                                .trim();
+
+                                // =================================
+                                // EXIT
+                                // =================================
+
+                                if (choice.equals("3")) {
+
+                                        serverOutput.println(
+                                                        "exit");
+
+                                        return false;
+                                }
+
+                                // =================================
+                                // LOGIN
+                                // =================================
+
+                                if (choice.equals("1")) {
+
+                                        boolean loginSuccessful = performLogin(
+                                                        serverInput,
+                                                        serverOutput,
+                                                        scanner);
+
+                                        if (loginSuccessful) {
+
+                                                return true;
+                                        }
+
+                                        // Login failed.
+                                        // Go back to authentication menu.
+                                        continue;
+                                }
+
+                                // =================================
+                                // REGISTER
+                                // =================================
+
+                                if (choice.equals("2")) {
+
+                                        performRegistration(
+                                                        serverInput,
+                                                        serverOutput,
+                                                        scanner);
+
+                                        /*
+                                         * After registration we DON'T
+                                         * return true.
+                                         *
+                                         * The user must login.
+                                         */
+
+                                        continue;
+                                }
+
+                                System.out.println();
+
+                                System.out.println(
+                                                "Invalid choice.");
 
                         } catch (IOException e) {
 
-                            System.out.println();
+                                System.out.println();
 
-                            System.out.println(
-                                    "Connection to server lost."
-                            );
+                                System.out.println(
+                                                "Authentication error: "
+                                                                + e.getMessage());
+
+                                return false;
                         }
-                    });
-
-            receiveThread.start();
-
-            // =================================
-            // COMMAND MENU
-            // =================================
-
-            printCommandMenu();
-
-            // =================================
-            // SEND MESSAGES
-            // =================================
-
-            while (true) {
-
-                System.out.print("You: ");
-
-                if (!scanner.hasNextLine()) {
-                        break;
-                }
-
-                String message =
-                        scanner.nextLine();
-
-                if (message == null) {
-                        break;
-                }
-
-                serverOutput.println(message);
-
-                if (message.equalsIgnoreCase("/exit")) {
-                        break;
                 }
         }
-            socket.close();
 
-            System.out.println(
-                    "Disconnected from server."
-            );
+        // =========================================
+        // LOGIN
+        // =========================================
 
-        } catch (IOException e) {
+        private static boolean performLogin(
+                        BufferedReader serverInput,
+                        PrintWriter serverOutput,
+                        Scanner scanner)
+                        throws IOException {
 
-            System.out.println();
-
-            System.out.println(
-                    "Unable to connect to server."
-            );
-
-            System.out.println(
-                    "Error: "
-                            + e.getMessage()
-            );
-        }
-    }
-
-    // =========================================
-    // AUTHENTICATION METHOD
-    // =========================================
-
-    private static boolean authenticate(
-            BufferedReader serverInput,
-            PrintWriter serverOutput,
-            Scanner scanner) {
-
-        while (true) {
-
-            try {
+                // Tell server that the user selected LOGIN
+                serverOutput.println("login");
 
                 /*
-                 * Server first sends:
+                 * Server expects:
                  *
-                 * AUTH_REQUEST
+                 * USERNAME_REQUEST
                  */
 
-                String authRequest =
-                        serverInput.readLine();
+                String request = serverInput.readLine();
 
-                if (authRequest == null) {
+                if (!"USERNAME_REQUEST".equals(
+                                request)) {
 
-                    System.out.println(
-                            "Server disconnected."
-                    );
+                        System.out.println(
+                                        "Unexpected server response: "
+                                                        + request);
 
-                    return false;
+                        return false;
                 }
 
-                if (!authRequest.equals(
-                        "AUTH_REQUEST")) {
+                System.out.print(
+                                "Enter username: ");
 
-                    System.out.println(
-                            "Unexpected server response: "
-                                    + authRequest
-                    );
+                String username = scanner.nextLine().trim();
 
-                    return false;
+                serverOutput.println(
+                                username);
+
+                /*
+                 * Server now asks for password.
+                 */
+
+                request = serverInput.readLine();
+
+                if (!"PASSWORD_REQUEST".equals(
+                                request)) {
+
+                        System.out.println(
+                                        "Unexpected server response: "
+                                                        + request);
+
+                        return false;
                 }
 
-                // =================================
-                // LOGIN MENU
-                // =================================
+                System.out.print(
+                                "Enter password: ");
+
+                String password = scanner.nextLine();
+
+                serverOutput.println(
+                                password);
+
+                /*
+                 * Server checks MongoDB + BCrypt.
+                 */
+
+                String response = serverInput.readLine();
+
+                if (response == null) {
+
+                        System.out.println(
+                                        "Server disconnected.");
+
+                        return false;
+                }
 
                 System.out.println();
 
                 System.out.println(
-                        "================================="
-                );
-
-                System.out.println(
-                        "        CLOUDCHAT LOGIN"
-                );
-
-                System.out.println(
-                        "================================="
-                );
-
-                System.out.println(
-                        "1. Login"
-                );
-
-                System.out.println(
-                        "2. Register"
-                );
-
-                System.out.println(
-                        "3. Exit"
-                );
-
-                System.out.println(
-                        "================================="
-                );
-
-                System.out.print(
-                        "Enter choice: "
-                );
-
-                String choice =
-                        scanner.nextLine()
-                                .trim();
+                                response);
 
                 // =================================
-                // EXIT
+                // LOGIN SUCCESS
                 // =================================
 
-                if (choice.equals("3")) {
+                if (response.startsWith(
+                                "LOGIN_SUCCESS")) {
 
-                    serverOutput.println(
-                            "exit"
-                    );
+                        System.out.println();
 
-                    return false;
-                }
-
-                // =================================
-                // LOGIN
-                // =================================
-
-               if (choice.equals("1")) {
-
-    boolean loginSuccessful =
-            performLogin(
-                    serverInput,
-                    serverOutput,
-                    scanner
-            );
-
-                if (loginSuccessful) {
+                        System.out.println(
+                                        "Authentication successful!");
 
                         return true;
                 }
 
-                // Login failed.
-                // Go back to authentication menu.
-                continue;
-                }
-
                 // =================================
-                // REGISTER
+                // LOGIN FAILED
                 // =================================
-
-                if (choice.equals("2")) {
-
-                    performRegistration(
-                            serverInput,
-                            serverOutput,
-                            scanner
-                    );
-
-                    /*
-                     * After registration we DON'T
-                     * return true.
-                     *
-                     * The user must login.
-                     */
-
-                    continue;
-                }
 
                 System.out.println();
 
                 System.out.println(
-                        "Invalid choice."
-                );
+                                "Login failed.");
 
-            } catch (IOException e) {
-
-                System.out.println();
-
-                System.out.println(
-                        "Authentication error: "
-                                + e.getMessage()
-                );
+                /*
+                 * IMPORTANT:
+                 *
+                 * We return false here because the
+                 * current server authentication loop
+                 * will send AUTH_REQUEST again.
+                 *
+                 * However, because the server keeps the
+                 * connection open, we need to continue
+                 * authentication rather than closing.
+                 */
 
                 return false;
-            }
         }
-    }
-
-    // =========================================
-    // LOGIN
-    // =========================================
-
-    private static boolean performLogin(
-            BufferedReader serverInput,
-            PrintWriter serverOutput,
-            Scanner scanner)
-            throws IOException {
-
-        // Tell server that the user selected LOGIN        
-        serverOutput.println("login");
-
-        /*
-         * Server expects:
-         *
-         * USERNAME_REQUEST
-         */
-
-        String request =
-                serverInput.readLine();
-
-        if (!"USERNAME_REQUEST".equals(
-                request)) {
-
-            System.out.println(
-                    "Unexpected server response: "
-                            + request
-            );
-
-            return false;
-        }
-
-        System.out.print(
-                "Enter username: "
-        );
-
-        String username =
-                scanner.nextLine().trim();
-
-        serverOutput.println(
-                username
-        );
-
-        /*
-         * Server now asks for password.
-         */
-
-        request =
-                serverInput.readLine();
-
-        if (!"PASSWORD_REQUEST".equals(
-                request)) {
-
-            System.out.println(
-                    "Unexpected server response: "
-                            + request
-            );
-
-            return false;
-        }
-
-        System.out.print(
-                "Enter password: "
-        );
-
-        String password =
-                scanner.nextLine();
-
-        serverOutput.println(
-                password
-        );
-
-        /*
-         * Server checks MongoDB + BCrypt.
-         */
-
-        String response =
-                serverInput.readLine();
-
-        if (response == null) {
-
-            System.out.println(
-                    "Server disconnected."
-            );
-
-            return false;
-        }
-
-        System.out.println();
-
-        System.out.println(
-                response
-        );
-
-        // =================================
-        // LOGIN SUCCESS
-        // =================================
-
-        if (response.startsWith(
-                "LOGIN_SUCCESS")) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Authentication successful!"
-            );
-
-            return true;
-        }
-
-        // =================================
-        // LOGIN FAILED
-        // =================================
-
-        System.out.println();
-
-        System.out.println(
-                "Login failed."
-        );
-
-        /*
-         * IMPORTANT:
-         *
-         * We return false here because the
-         * current server authentication loop
-         * will send AUTH_REQUEST again.
-         *
-         * However, because the server keeps the
-         * connection open, we need to continue
-         * authentication rather than closing.
-         */
-
-        return false;
-    }
-
-    // =========================================
-    // REGISTRATION
-    // =========================================
-
-    private static void performRegistration(
-            BufferedReader serverInput,
-            PrintWriter serverOutput,
-            Scanner scanner)
-            throws IOException {
-
-        /*
-         * Tell server that we want registration.
-         */
-
-        serverOutput.println(
-                "register"
-        );
-
-        // =================================
-        // USERNAME
-        // =================================
-
-        String request =
-                serverInput.readLine();
-
-        if (!"USERNAME_REQUEST".equals(
-                request)) {
-
-            System.out.println(
-                    "Unexpected server response: "
-                            + request
-            );
-
-            return;
-        }
-
-        System.out.print(
-                "Enter username: "
-        );
-
-        String username =
-                scanner.nextLine().trim();
-
-        serverOutput.println(
-                username
-        );
-
-        // =================================
-        // EMAIL
-        // =================================
-
-        request =
-                serverInput.readLine();
-
-        if (!"EMAIL_REQUEST".equals(
-                request)) {
-
-            System.out.println(
-                    "Unexpected server response: "
-                            + request
-            );
-
-            return;
-        }
-
-        System.out.print(
-                "Enter email: "
-        );
-
-        String email =
-                scanner.nextLine().trim();
-
-        serverOutput.println(
-                email
-        );
-
-        // =================================
-        // PASSWORD
-        // =================================
-
-        request =
-                serverInput.readLine();
-
-        if (!"PASSWORD_REQUEST".equals(
-                request)) {
-
-            System.out.println(
-                    "Unexpected server response: "
-                            + request
-            );
-
-            return;
-        }
-
-        System.out.print(
-                "Enter password: "
-        );
-
-        String password =
-                scanner.nextLine();
-
-        serverOutput.println(
-                password
-        );
-
-        // =================================
-        // REGISTRATION RESULT
-        // =================================
-
-        String response =
-                serverInput.readLine();
-
-        if (response == null) {
-
-            System.out.println(
-                    "Server disconnected."
-            );
-
-            return;
-        }
-
-        System.out.println();
-
-        System.out.println(
-                response
-        );
-
-        if (response.startsWith(
-                "REGISTER_SUCCESS")) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Registration completed."
-            );
-
-            System.out.println(
-                    "Please login with your credentials."
-            );
-
-        } else {
-
-            System.out.println();
-
-            System.out.println(
-                    "Registration failed."
-            );
-        }
-    }
         // =========================================
-    // COMMAND MENU
-    // =========================================
+        // RECEIVE FILE
+        // =========================================
 
-    private static void printCommandMenu() {
+        private static void receiveFile() {
 
-        System.out.println();
+                final int FILE_PORT = 5001;
 
-        System.out.println(
-                "================================="
-        );
+                File downloadDirectory = new File("downloads");
 
-        System.out.println(
-                "          CHAT COMMANDS"
-        );
+                if (!downloadDirectory.exists()) {
 
-        System.out.println(
-                "================================="
-        );
+                        downloadDirectory.mkdirs();
+                }
 
-        System.out.println(
-                "/users"
-        );
+                try (
+                                Socket fileSocket = new Socket(
+                                                SERVER_ADDRESS,
+                                                FILE_PORT);
 
-        System.out.println(
-                "/msg username message"
-        );
+                                DataInputStream input = new DataInputStream(
+                                                fileSocket.getInputStream())) {
 
-        System.out.println(
-                "/create group"
-        );
+                        // Receive file name
+                        String fileName = input.readUTF();
 
-        System.out.println(
-                "/join group"
-        );
+                        // Receive file size
+                        long fileSize = input.readLong();
 
-        System.out.println(
-                "/leave group"
-        );
+                        System.out.println();
+                        System.out.println(
+                                        "=================================");
+                        System.out.println(
+                                        "Receiving file: " + fileName);
+                        System.out.println(
+                                        "File size: " + fileSize + " bytes");
 
-        System.out.println(
-                "/groups"
-        );
+                        File outputFile = new File(
+                                        downloadDirectory,
+                                        fileName);
 
-        System.out.println(
-                "/members group"
-        );
+                        try (
+                                        FileOutputStream output = new FileOutputStream(
+                                                        outputFile)) {
 
-        System.out.println(
-                "/groupmsg group message"
-        );
+                                byte[] buffer = new byte[8192];
 
-        System.out.println(
-                "/exit"
-        );
+                                long totalReceived = 0;
 
-        System.out.println(
-                "================================="
-        );
+                                while (totalReceived < fileSize) {
 
-        System.out.println();
-    }
+                                        int bytesRead = input.read(
+                                                        buffer,
+                                                        0,
+                                                        (int) Math.min(
+                                                                        buffer.length,
+                                                                        fileSize - totalReceived));
 
-    // =========================================
-    // FORMAT SERVER MESSAGES
-    // =========================================
+                                        if (bytesRead == -1) {
+                                                break;
+                                        }
 
-    private static String formatServerMessage(
-            String message) {
+                                        output.write(
+                                                        buffer,
+                                                        0,
+                                                        bytesRead);
 
-        if (message == null) {
+                                        totalReceived += bytesRead;
+                                }
+                        }
 
-            return "";
+                        System.out.println(
+                                        "File received successfully!");
+
+                        System.out.println(
+                                        "Saved at: "
+                                                        + outputFile.getAbsolutePath());
+
+                        System.out.println(
+                                        "=================================");
+
+                } catch (IOException e) {
+
+                        System.out.println();
+                        System.out.println(
+                                        "Unable to receive file.");
+
+                        System.out.println(
+                                        "Error: " + e.getMessage());
+                }
         }
 
-        // =================================
-        // ONLINE USERS
-        // =================================
+        // =========================================
+        // REGISTRATION
+        // =========================================
 
-        if (message.startsWith(
-                "ONLINE_USERS:")) {
+        private static void performRegistration(
+                        BufferedReader serverInput,
+                        PrintWriter serverOutput,
+                        Scanner scanner)
+                        throws IOException {
 
-            String users =
-                    message.substring(
-                            "ONLINE_USERS:"
-                                    .length()
-                    );
+                /*
+                 * Tell server that we want registration.
+                 */
 
-            users = users.replace(
-                    ",",
-                    "\n"
-            );
+                serverOutput.println(
+                                "register");
 
-            return "\n"
-                    + "========== ONLINE USERS ==========\n"
-                    + users
-                    + "\n"
-                    + "==================================";
+                // =================================
+                // USERNAME
+                // =================================
+
+                String request = serverInput.readLine();
+
+                if (!"USERNAME_REQUEST".equals(
+                                request)) {
+
+                        System.out.println(
+                                        "Unexpected server response: "
+                                                        + request);
+
+                        return;
+                }
+
+                System.out.print(
+                                "Enter username: ");
+
+                String username = scanner.nextLine().trim();
+
+                serverOutput.println(
+                                username);
+
+                // =================================
+                // EMAIL
+                // =================================
+
+                request = serverInput.readLine();
+
+                if (!"EMAIL_REQUEST".equals(
+                                request)) {
+
+                        System.out.println(
+                                        "Unexpected server response: "
+                                                        + request);
+
+                        return;
+                }
+
+                System.out.print(
+                                "Enter email: ");
+
+                String email = scanner.nextLine().trim();
+
+                serverOutput.println(
+                                email);
+
+                // =================================
+                // PASSWORD
+                // =================================
+
+                request = serverInput.readLine();
+
+                if (!"PASSWORD_REQUEST".equals(
+                                request)) {
+
+                        System.out.println(
+                                        "Unexpected server response: "
+                                                        + request);
+
+                        return;
+                }
+
+                System.out.print(
+                                "Enter password: ");
+
+                String password = scanner.nextLine();
+
+                serverOutput.println(
+                                password);
+
+                // =================================
+                // REGISTRATION RESULT
+                // =================================
+
+                String response = serverInput.readLine();
+
+                if (response == null) {
+
+                        System.out.println(
+                                        "Server disconnected.");
+
+                        return;
+                }
+
+                System.out.println();
+
+                System.out.println(
+                                response);
+
+                if (response.startsWith(
+                                "REGISTER_SUCCESS")) {
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "Registration completed.");
+
+                        System.out.println(
+                                        "Please login with your credentials.");
+
+                } else {
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "Registration failed.");
+                }
+        }
+        // =========================================
+        // COMMAND MENU
+        // =========================================
+
+        private static void printCommandMenu() {
+
+                System.out.println();
+
+                System.out.println(
+                                "=================================");
+
+                System.out.println(
+                                "          CHAT COMMANDS");
+
+                System.out.println(
+                                "=================================");
+
+                System.out.println(
+                                "/users");
+
+                System.out.println(
+                                "/msg username message");
+
+                System.out.println(
+                                "/create group");
+
+                System.out.println(
+                                "/join group");
+
+                System.out.println(
+                                "/leave group");
+
+                System.out.println(
+                                "/groups");
+
+                System.out.println(
+                                "/members group");
+
+                System.out.println(
+                                "/groupmsg group message");
+
+                System.out.println(
+                                "/sendfile username filepath");
+
+                System.out.println(
+                                "/exit");
+
+                System.out.println(
+                                "=================================");
+                System.out.println(
+                                "/history username");
+
+                System.out.println(
+                                "/grouphistory group");
+
+                System.out.println();
         }
 
-        // =================================
-        // GROUPS
-        // =================================
+        // =========================================
+        // FORMAT SERVER MESSAGES
+        // =========================================
 
-        if (message.startsWith(
-                "GROUPS:")) {
+        private static String formatServerMessage(
+                        String message) {
 
-            String groups =
-                    message.substring(
-                            "GROUPS:"
-                                    .length()
-                    );
+                if (message == null) {
 
-            groups = groups.replace(
-                    ",",
-                    "\n"
-            );
+                        return "";
+                }
 
-            return "\n"
-                    + "============ GROUPS =============\n"
-                    + groups
-                    + "\n"
-                    + "==================================";
+                // =================================
+                // ONLINE USERS
+                // =================================
+
+                if (message.startsWith(
+                                "ONLINE_USERS:")) {
+
+                        String users = message.substring(
+                                        "ONLINE_USERS:"
+                                                        .length());
+
+                        users = users.replace(
+                                        ",",
+                                        "\n");
+
+                        return "\n"
+                                        + "========== ONLINE USERS ==========\n"
+                                        + users
+                                        + "\n"
+                                        + "==================================";
+                }
+
+                // =================================
+                // GROUPS
+                // =================================
+
+                if (message.startsWith(
+                                "GROUPS:")) {
+
+                        String groups = message.substring(
+                                        "GROUPS:"
+                                                        .length());
+
+                        groups = groups.replace(
+                                        ",",
+                                        "\n");
+
+                        return "\n"
+                                        + "============ GROUPS =============\n"
+                                        + groups
+                                        + "\n"
+                                        + "==================================";
+                }
+
+                return message;
         }
-
-        return message;
-    }
 }
