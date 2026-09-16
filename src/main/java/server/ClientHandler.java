@@ -597,89 +597,120 @@ public class ClientHandler implements Runnable {
         // SEND FILE
         // =========================================================
 
-        private void handleSendFile(
-                        String message) {
+        private void handleSendFile(String message) {
 
                 String[] parts = message.split(" ", 3);
 
                 if (parts.length < 3) {
-
-                        sendMessage(
-                                        "SYSTEM: Invalid format.");
-
-                        sendMessage(
-                                        "SYSTEM: Use /sendfile username filepath");
-
+                        sendMessage("SYSTEM: Invalid format.");
+                        sendMessage("SYSTEM: Use /sendfile username filepath");
                         return;
                 }
 
                 String recipient = parts[1];
-
                 String filePath = parts[2];
 
                 File file = new File(filePath);
 
+                // -----------------------------------------------------
+                // Validate file
+                // -----------------------------------------------------
+
                 if (!file.exists()) {
-
-                        sendMessage(
-                                        "SYSTEM: File does not exist.");
-
+                        sendMessage("SYSTEM: File does not exist.");
                         return;
                 }
 
                 if (!file.isFile()) {
-
-                        sendMessage(
-                                        "SYSTEM: Selected path is not a file.");
-
-                        return;
-                }
-
-                ClientHandler recipientHandler = ChatServer.getOnlineUser(
-                                recipient);
-
-                if (recipientHandler == null) {
-
-                        sendMessage(
-                                        "SYSTEM: User '"
-                                                        + recipient
-                                                        + "' is not online.");
-
+                        sendMessage("SYSTEM: Selected path is not a file.");
                         return;
                 }
 
                 if (!isSupportedFile(file)) {
+                        sendMessage("SYSTEM: Unsupported file type.");
+                        sendMessage(
+                                        "SYSTEM: Supported files: Images, PDF and Audio.");
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Check local recipient
+                // -----------------------------------------------------
+
+                ClientHandler recipientHandler = ChatServer.getOnlineUser(recipient);
+
+                if (recipientHandler != null) {
+
+                        System.out.println(
+                                        "[FILE] Local transfer: "
+                                                        + username
+                                                        + " -> "
+                                                        + recipient);
+
+                        recipientHandler.sendMessage(
+                                        "FILE_INCOMING: "
+                                                        + username
+                                                        + " wants to send you "
+                                                        + file.getName());
+
+                        recipientHandler.sendMessage(
+                                        "FILE_INFO: "
+                                                        + file.length()
+                                                        + " bytes");
+
+                        Thread fileTransferThread = new Thread(
+                                        new FileTransferServer(
+                                                        recipient,
+                                                        file));
+
+                        fileTransferThread.start();
 
                         sendMessage(
-                                        "SYSTEM: Unsupported file type.");
-
-                        sendMessage(
-                                        "SYSTEM: Supported files: "
-                                                        + "Images, PDF and Audio.");
+                                        "SYSTEM: File transfer started.");
 
                         return;
                 }
 
-                recipientHandler.sendMessage(
-                                "FILE_INCOMING: "
-                                                + username
-                                                + " wants to send you "
-                                                + file.getName());
+                // -----------------------------------------------------
+                // Check remote recipient
+                // -----------------------------------------------------
 
-                recipientHandler.sendMessage(
-                                "FILE_INFO: "
-                                                + file.length()
-                                                + " bytes");
+                if (ChatServer.isRemoteUserOnline(recipient)) {
 
-                Thread fileTransferThread = new Thread(
-                                new FileTransferServer(
-                                                recipient,
-                                                file));
+                        System.out.println(
+                                        "[FILE] Remote recipient detected: "
+                                                        + username
+                                                        + " -> "
+                                                        + recipient);
 
-                fileTransferThread.start();
+                        boolean routed = ChatServer.sendFileRouteRequest(
+                                        username,
+                                        recipient,
+                                        file.getName(),
+                                        file.length());
+
+                        if (routed) {
+
+                                sendMessage(
+                                                "SYSTEM: Remote file transfer request sent.");
+
+                        } else {
+
+                                sendMessage(
+                                                "SYSTEM: Unable to contact remote server.");
+                        }
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Recipient not online
+                // -----------------------------------------------------
 
                 sendMessage(
-                                "SYSTEM: File transfer started.");
+                                "SYSTEM: User '"
+                                                + recipient
+                                                + "' is not online.");
         }
 
         // =========================================================

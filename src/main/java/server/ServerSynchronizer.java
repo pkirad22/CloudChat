@@ -530,6 +530,16 @@ public class ServerSynchronizer {
                         return;
                 }
 
+                if (message.startsWith("FILE_ROUTE_REQUEST:")) {
+                        processFileRouteRequest(message);
+                        return;
+                }
+
+                if (message.startsWith("FILE_ROUTE_ACK:")) {
+                        processFileRouteAck(message);
+                        return;
+                }
+
                 // =====================================================
                 // STATUS
                 // =====================================================
@@ -1130,6 +1140,93 @@ public class ServerSynchronizer {
                                                 + remoteOnlineUsers);
         }
 
+        private void processFileRouteRequest(String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 5);
+
+                        if (parts.length < 5) {
+                                System.out.println("[SYNC] Invalid FILE_ROUTE_REQUEST.");
+                                return;
+                        }
+
+                        String sender = parts[1];
+                        String recipient = parts[2];
+                        String fileName = parts[3];
+                        long fileSize = Long.parseLong(parts[4]);
+
+                        System.out.println(
+                                        "[SYNC] FILE_ROUTE_REQUEST received: "
+                                                        + sender + " -> "
+                                                        + recipient
+                                                        + " | File: " + fileName
+                                                        + " | Size: " + fileSize + " bytes");
+
+                        ClientHandler recipientHandler = ChatServer.getOnlineUser(recipient);
+
+                        if (recipientHandler == null) {
+
+                                System.out.println(
+                                                "[SYNC] File recipient is offline: "
+                                                                + recipient);
+
+                                send(
+                                                "FILE_ROUTE_ACK:"
+                                                                + sender + ":"
+                                                                + recipient
+                                                                + ":FAILED");
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[SYNC] File recipient is online: "
+                                                        + recipient);
+
+                        send(
+                                        "FILE_ROUTE_ACK:"
+                                                        + sender + ":"
+                                                        + recipient
+                                                        + ":READY");
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing FILE_ROUTE_REQUEST: "
+                                                        + e.getMessage());
+                }
+        }
+
+        private void processFileRouteAck(String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 4);
+
+                        if (parts.length < 4) {
+                                System.out.println("[SYNC] Invalid FILE_ROUTE_ACK.");
+                                return;
+                        }
+
+                        String sender = parts[1];
+                        String recipient = parts[2];
+                        String status = parts[3];
+
+                        System.out.println(
+                                        "[SYNC] FILE_ROUTE_ACK received: "
+                                                        + sender + " -> "
+                                                        + recipient
+                                                        + " | Status: " + status);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing FILE_ROUTE_ACK: "
+                                                        + e.getMessage());
+                }
+        }
+
         // =========================================================
         // SEND
         // =========================================================
@@ -1215,6 +1312,53 @@ public class ServerSynchronizer {
         public boolean isConnected() {
 
                 return connected;
+        }
+
+        public boolean sendFileRouteRequest(
+                        String sender,
+                        String recipient,
+                        String fileName,
+                        long fileSize) {
+
+                try {
+                        if (!connected) {
+                                System.out.println("[SYNC] Cannot send file route request. Server not connected.");
+                                return false;
+                        }
+
+                        String message = "FILE_ROUTE_REQUEST:"
+                                        + sender + ":"
+                                        + recipient + ":"
+                                        + fileName + ":"
+                                        + fileSize;
+
+                        send(message);
+
+                        System.out.println(
+                                        "[SYNC] FILE_ROUTE_REQUEST sent: "
+                                                        + sender + " -> "
+                                                        + recipient
+                                                        + " | File: " + fileName
+                                                        + " | Size: " + fileSize + " bytes");
+
+                        return true;
+
+                } catch (Exception e) {
+                        System.out.println(
+                                        "[SYNC] Failed to send file route request: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        public boolean isRemoteUserOnline(String username) {
+
+                if (username == null || username.trim().isEmpty()) {
+                        return false;
+                }
+
+                return remoteOnlineUsers.contains(username.trim());
         }
 
         // =========================================================

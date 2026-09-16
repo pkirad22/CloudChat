@@ -450,10 +450,6 @@ public class ChatServer {
         // GROUP CREATION
         // =========================================================
 
-        // =========================================================
-        // GROUP CREATION
-        // =========================================================
-
         public static boolean createGroup(
                         String groupName,
                         ClientHandler creator) {
@@ -798,6 +794,36 @@ public class ChatServer {
                 }
 
                 return client.isRemoteGroupMember(groupName);
+        }
+
+        public static boolean isRemoteUserOnline(String username) {
+
+                if (serverSynchronizer == null) {
+                        return false;
+                }
+
+                return serverSynchronizer.isRemoteUserOnline(username);
+        }
+
+        public static boolean sendFileRouteRequest(
+                        String sender,
+                        String recipient,
+                        String fileName,
+                        long fileSize) {
+
+                if (serverSynchronizer == null) {
+
+                        System.out.println(
+                                        "[FILE] ServerSynchronizer is not initialized.");
+
+                        return false;
+                }
+
+                return serverSynchronizer.sendFileRouteRequest(
+                                sender,
+                                recipient,
+                                fileName,
+                                fileSize);
         }
 
         // =========================================================
