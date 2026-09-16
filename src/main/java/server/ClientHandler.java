@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.time.LocalDateTime;
+import java.util.List;
 
 import model.User;
 import model.Message;
@@ -13,29 +15,63 @@ import model.Message;
 import service.UserService;
 import service.ChatHistoryService;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.io.File;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientHandler implements Runnable {
+
+        // =========================================================
+        // CLIENT CONNECTION
+        // =========================================================
 
         private final Socket clientSocket;
 
         private BufferedReader input;
+
         private PrintWriter output;
 
         private String username;
+
+        // =========================================================
+        // REMOTE GROUP MEMBERSHIP
+        // =========================================================
+
+        /*
+         * Groups that this client joined on another server.
+         *
+         * Example:
+         *
+         * Pranav connected to Server 2
+         * and joined MCA hosted on Server 1.
+         *
+         * remoteJoinedGroups = [MCA]
+         */
+        private final Set<String> remoteJoinedGroups = ConcurrentHashMap.newKeySet();
+
+        // =========================================================
+        // SERVICES
+        // =========================================================
 
         private final UserService userService;
 
         private final ChatHistoryService chatHistoryService;
 
+        // =========================================================
+        // CONSTRUCTOR
+        // =========================================================
+
         public ClientHandler(Socket clientSocket) {
 
                 this.clientSocket = clientSocket;
+
                 this.userService = new UserService();
+
                 this.chatHistoryService = new ChatHistoryService();
         }
+
+        // =========================================================
+        // RUN
+        // =========================================================
 
         @Override
         public void run() {
@@ -50,16 +86,15 @@ public class ClientHandler implements Runnable {
                                         clientSocket.getOutputStream(),
                                         true);
 
-                        // ================================
+                        // =================================================
                         // AUTHENTICATION
-                        // ================================
+                        // =================================================
 
                         boolean authenticated = false;
 
                         while (!authenticated) {
 
-                                sendMessage(
-                                                "AUTH_REQUEST");
+                                sendMessage("AUTH_REQUEST");
 
                                 String authChoice = input.readLine();
 
@@ -70,12 +105,13 @@ public class ClientHandler implements Runnable {
                                         return;
                                 }
 
-                                authChoice = authChoice.trim()
+                                authChoice = authChoice
+                                                .trim()
                                                 .toLowerCase();
 
-                                // ================================
+                                // =================================================
                                 // REGISTER
-                                // ================================
+                                // =================================================
 
                                 if (authChoice.equals("register")) {
 
@@ -84,8 +120,10 @@ public class ClientHandler implements Runnable {
 
                                         String registerUsername = input.readLine();
 
-                                        if (registerUsername == null ||
-                                                        registerUsername.trim().isEmpty()) {
+                                        if (registerUsername == null
+                                                        || registerUsername
+                                                                        .trim()
+                                                                        .isEmpty()) {
 
                                                 sendMessage(
                                                                 "ERROR: Username cannot be empty.");
@@ -100,8 +138,10 @@ public class ClientHandler implements Runnable {
 
                                         String email = input.readLine();
 
-                                        if (email == null ||
-                                                        email.trim().isEmpty()) {
+                                        if (email == null
+                                                        || email
+                                                                        .trim()
+                                                                        .isEmpty()) {
 
                                                 sendMessage(
                                                                 "ERROR: Email cannot be empty.");
@@ -116,8 +156,8 @@ public class ClientHandler implements Runnable {
 
                                         String password = input.readLine();
 
-                                        if (password == null ||
-                                                        password.isEmpty()) {
+                                        if (password == null
+                                                        || password.isEmpty()) {
 
                                                 sendMessage(
                                                                 "ERROR: Password cannot be empty.");
@@ -148,9 +188,9 @@ public class ClientHandler implements Runnable {
                                         }
                                 }
 
-                                // ================================
+                                // =================================================
                                 // LOGIN
-                                // ================================
+                                // =================================================
 
                                 else if (authChoice.equals("login")) {
 
@@ -159,8 +199,10 @@ public class ClientHandler implements Runnable {
 
                                         String loginUsername = input.readLine();
 
-                                        if (loginUsername == null ||
-                                                        loginUsername.trim().isEmpty()) {
+                                        if (loginUsername == null
+                                                        || loginUsername
+                                                                        .trim()
+                                                                        .isEmpty()) {
 
                                                 sendMessage(
                                                                 "ERROR: Username cannot be empty.");
@@ -175,8 +217,8 @@ public class ClientHandler implements Runnable {
 
                                         String password = input.readLine();
 
-                                        if (password == null ||
-                                                        password.isEmpty()) {
+                                        if (password == null
+                                                        || password.isEmpty()) {
 
                                                 sendMessage(
                                                                 "ERROR: Password cannot be empty.");
@@ -184,7 +226,6 @@ public class ClientHandler implements Runnable {
                                                 continue;
                                         }
 
-                                        // Check MongoDB
                                         User loggedInUser = userService.loginUser(
                                                         loginUsername,
                                                         password);
@@ -198,7 +239,10 @@ public class ClientHandler implements Runnable {
                                                 continue;
                                         }
 
-                                        // Check whether user is already online
+                                        // =============================================
+                                        // ADD USER TO CURRENT SERVER
+                                        // =============================================
+
                                         if (!ChatServer.addOnlineUser(
                                                         loginUsername,
                                                         this)) {
@@ -209,15 +253,22 @@ public class ClientHandler implements Runnable {
                                                 continue;
                                         }
 
-                                        // Authentication successful
                                         username = loginUsername;
 
                                         authenticated = true;
+
+                                        // =============================================
+                                        // LOGIN SUCCESS
+                                        // =============================================
 
                                         sendMessage(
                                                         "LOGIN_SUCCESS: Welcome "
                                                                         + username
                                                                         + "!");
+
+                                        // =============================================
+                                        // BROADCAST USER JOIN
+                                        // =============================================
 
                                         ChatServer.broadcastMessage(
                                                         "SYSTEM: "
@@ -225,9 +276,17 @@ public class ClientHandler implements Runnable {
                                                                         + " joined the chat.",
                                                         this);
 
+                                        // =============================================
+                                        // SEND ONLINE USERS
+                                        // =============================================
+
                                         ChatServer.sendOnlineUsers(
                                                         this);
                                 }
+
+                                // =================================================
+                                // INVALID AUTH OPTION
+                                // =================================================
 
                                 else {
 
@@ -237,27 +296,26 @@ public class ClientHandler implements Runnable {
                                 }
                         }
 
-                        // ================================
+                        // =====================================================
                         // START CHAT
-                        // ================================
+                        // =====================================================
 
                         String message;
 
-                        // Message loop
                         while ((message = input.readLine()) != null) {
 
                                 message = message.trim();
 
                                 if (message.isEmpty()) {
+
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // ONLINE USERS
-                                // ==============================
+                                // =================================================
 
-                                if (message.equalsIgnoreCase(
-                                                "/users")) {
+                                if (message.equalsIgnoreCase("/users")) {
 
                                         ChatServer.sendOnlineUsers(
                                                         this);
@@ -265,12 +323,11 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // GROUP LIST
-                                // ==============================
+                                // =================================================
 
-                                if (message.equalsIgnoreCase(
-                                                "/groups")) {
+                                if (message.equalsIgnoreCase("/groups")) {
 
                                         ChatServer.sendGroupList(
                                                         this);
@@ -278,73 +335,64 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // CREATE GROUP
-                                // ==============================
+                                // =================================================
 
-                                if (message.startsWith(
-                                                "/create ")) {
+                                if (message.startsWith("/create ")) {
 
-                                        handleCreateGroup(
-                                                        message);
+                                        handleCreateGroup(message);
 
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // JOIN GROUP
-                                // ==============================
+                                // =================================================
 
-                                if (message.startsWith(
-                                                "/join ")) {
+                                if (message.startsWith("/join ")) {
 
-                                        handleJoinGroup(
-                                                        message);
+                                        handleJoinGroup(message);
 
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // LEAVE GROUP
-                                // ==============================
+                                // =================================================
 
-                                if (message.startsWith(
-                                                "/leave ")) {
+                                if (message.startsWith("/leave ")) {
 
-                                        handleLeaveGroup(
-                                                        message);
+                                        handleLeaveGroup(message);
 
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // GROUP MEMBERS
-                                // ==============================
+                                // =================================================
 
-                                if (message.startsWith(
-                                                "/members ")) {
+                                if (message.startsWith("/members ")) {
 
-                                        handleGroupMembers(
-                                                        message);
+                                        handleGroupMembers(message);
 
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // GROUP MESSAGE
-                                // ==============================
+                                // =================================================
 
-                                if (message.startsWith(
-                                                "/groupmsg ")) {
+                                if (message.startsWith("/groupmsg ")) {
 
-                                        handleGroupMessage(
-                                                        message);
+                                        handleGroupMessage(message);
 
                                         continue;
                                 }
-                                // ==============================
-                                // PRIVATE FILE
-                                // ==============================
+
+                                // =================================================
+                                // FILE TRANSFER
+                                // =================================================
 
                                 if (message.startsWith("/sendfile ")) {
 
@@ -353,21 +401,20 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // PRIVATE MESSAGE
-                                // ==============================
+                                // =================================================
 
-                                if (message.startsWith(
-                                                "/msg ")) {
+                                if (message.startsWith("/msg ")) {
 
-                                        handlePrivateMessage(
-                                                        message);
+                                        handlePrivateMessage(message);
 
                                         continue;
                                 }
-                                // ==============================
+
+                                // =================================================
                                 // PRIVATE CHAT HISTORY
-                                // ==============================
+                                // =================================================
 
                                 if (message.startsWith("/history ")) {
 
@@ -376,9 +423,9 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // GROUP CHAT HISTORY
-                                // ==============================
+                                // =================================================
 
                                 if (message.startsWith("/grouphistory ")) {
 
@@ -387,19 +434,18 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
-                                // ==============================
+                                // =================================================
                                 // EXIT
-                                // ==============================
+                                // =================================================
 
-                                if (message.equalsIgnoreCase(
-                                                "/exit")) {
+                                if (message.equalsIgnoreCase("/exit")) {
 
                                         break;
                                 }
 
-                                // ==============================
-                                // NORMAL BROADCAST
-                                // ==============================
+                                // =================================================
+                                // BROADCAST MESSAGE
+                                // =================================================
 
                                 String formattedMessage = username
                                                 + ": "
@@ -407,10 +453,6 @@ public class ClientHandler implements Runnable {
 
                                 System.out.println(
                                                 formattedMessage);
-
-                                // =================================
-                                // SAVE MESSAGE TO MONGODB
-                                // =================================
 
                                 Message chatMessage = new Message(
                                                 username,
@@ -422,10 +464,6 @@ public class ClientHandler implements Runnable {
 
                                 chatHistoryService.saveMessage(
                                                 chatMessage);
-
-                                // =================================
-                                // BROADCAST MESSAGE
-                                // =================================
 
                                 ChatServer.broadcastMessage(
                                                 formattedMessage,
@@ -446,15 +484,16 @@ public class ClientHandler implements Runnable {
                 }
         }
 
-        // =====================================================
+        // =========================================================
         // CREATE GROUP
-        // =====================================================
+        // =========================================================
 
         private void handleCreateGroup(
                         String message) {
 
                 String groupName = message.substring(
-                                "/create ".length()).trim();
+                                "/create ".length())
+                                .trim();
 
                 if (groupName.isEmpty()) {
 
@@ -484,15 +523,16 @@ public class ClientHandler implements Runnable {
                 }
         }
 
-        // =====================================================
+        // =========================================================
         // JOIN GROUP
-        // =====================================================
+        // =========================================================
 
         private void handleJoinGroup(
                         String message) {
 
                 String groupName = message.substring(
-                                "/join ".length()).trim();
+                                "/join ".length())
+                                .trim();
 
                 if (groupName.isEmpty()) {
 
@@ -522,15 +562,16 @@ public class ClientHandler implements Runnable {
                 }
         }
 
-        // =====================================================
+        // =========================================================
         // LEAVE GROUP
-        // =====================================================
+        // =========================================================
 
         private void handleLeaveGroup(
                         String message) {
 
                 String groupName = message.substring(
-                                "/leave ".length()).trim();
+                                "/leave ".length())
+                                .trim();
 
                 boolean left = ChatServer.leaveGroup(
                                 groupName,
@@ -551,21 +592,15 @@ public class ClientHandler implements Runnable {
                                                         + "'.");
                 }
         }
-        // =====================================================
-        // SEND PRIVATE FILE
-        // =====================================================
 
-        private void handleSendFile(String message) {
+        // =========================================================
+        // SEND FILE
+        // =========================================================
 
-                /*
-                 * Expected:
-                 *
-                 * /sendfile username filepath
-                 */
+        private void handleSendFile(
+                        String message) {
 
-                String[] parts = message.split(
-                                " ",
-                                3);
+                String[] parts = message.split(" ", 3);
 
                 if (parts.length < 3) {
 
@@ -584,10 +619,6 @@ public class ClientHandler implements Runnable {
 
                 File file = new File(filePath);
 
-                // =============================================
-                // CHECK FILE EXISTS
-                // =============================================
-
                 if (!file.exists()) {
 
                         sendMessage(
@@ -596,10 +627,6 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                // =============================================
-                // CHECK FILE
-                // =============================================
-
                 if (!file.isFile()) {
 
                         sendMessage(
@@ -607,10 +634,6 @@ public class ClientHandler implements Runnable {
 
                         return;
                 }
-
-                // =============================================
-                // CHECK RECIPIENT
-                // =============================================
 
                 ClientHandler recipientHandler = ChatServer.getOnlineUser(
                                 recipient);
@@ -625,10 +648,6 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                // =============================================
-                // CHECK FILE TYPE
-                // =============================================
-
                 if (!isSupportedFile(file)) {
 
                         sendMessage(
@@ -641,10 +660,6 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                // =============================================
-                // INFORM RECIPIENT
-                // =============================================
-
                 recipientHandler.sendMessage(
                                 "FILE_INCOMING: "
                                                 + username
@@ -655,10 +670,6 @@ public class ClientHandler implements Runnable {
                                 "FILE_INFO: "
                                                 + file.length()
                                                 + " bytes");
-
-                // =============================================
-                // START FILE TRANSFER
-                // =============================================
 
                 Thread fileTransferThread = new Thread(
                                 new FileTransferServer(
@@ -671,22 +682,14 @@ public class ClientHandler implements Runnable {
                                 "SYSTEM: File transfer started.");
         }
 
-        // =====================================================
+        // =========================================================
         // GROUP MESSAGE
-        // =====================================================
+        // =========================================================
 
         private void handleGroupMessage(
                         String message) {
 
-                /*
-                 * Expected:
-                 *
-                 * /groupmsg groupName message
-                 */
-
-                String[] parts = message.split(
-                                " ",
-                                3);
+                String[] parts = message.split(" ", 3);
 
                 if (parts.length < 3) {
 
@@ -726,6 +729,7 @@ public class ClientHandler implements Runnable {
                                                         + groupName
                                                         + "] You: "
                                                         + groupMessage);
+
                 } else {
 
                         sendMessage(
@@ -735,31 +739,30 @@ public class ClientHandler implements Runnable {
                 }
         }
 
-        // =====================================================
+        // =========================================================
         // GROUP MEMBERS
-        // =====================================================
+        // =========================================================
 
         private void handleGroupMembers(
                         String message) {
 
                 String groupName = message.substring(
-                                "/members ".length()).trim();
+                                "/members ".length())
+                                .trim();
 
                 ChatServer.sendGroupMembers(
                                 groupName,
                                 this);
         }
 
-        // =====================================================
+        // =========================================================
         // PRIVATE MESSAGE
-        // =====================================================
+        // =========================================================
 
         private void handlePrivateMessage(
                         String message) {
 
-                String[] parts = message.split(
-                                " ",
-                                3);
+                String[] parts = message.split(" ", 3);
 
                 if (parts.length < 3) {
 
@@ -783,6 +786,14 @@ public class ClientHandler implements Runnable {
 
                 if (sent) {
 
+                        /*
+                         * Save the private message ONLY on the
+                         * originating server.
+                         *
+                         * Both servers use the same MongoDB database,
+                         * so the history is available regardless of
+                         * which server the user later connects to.
+                         */
                         Message chatMessage = new Message(
                                         username,
                                         recipient,
@@ -794,11 +805,16 @@ public class ClientHandler implements Runnable {
                         chatHistoryService.saveMessage(
                                         chatMessage);
 
+                        /*
+                         * Tell sender that the message was successfully
+                         * delivered/routed.
+                         */
                         sendMessage(
                                         "PRIVATE to "
                                                         + recipient
                                                         + ": "
                                                         + privateMessage);
+
                 } else {
 
                         sendMessage(
@@ -808,9 +824,9 @@ public class ClientHandler implements Runnable {
                 }
         }
 
-        // =====================================================
-        // SEND MESSAGE
-        // =====================================================
+        // =========================================================
+        // SEND MESSAGE TO CLIENT
+        // =========================================================
 
         public void sendMessage(
                         String message) {
@@ -821,10 +837,16 @@ public class ClientHandler implements Runnable {
                 }
         }
 
-        private void handlePrivateChatHistory(String message) {
+        // =========================================================
+        // PRIVATE CHAT HISTORY
+        // =========================================================
+
+        private void handlePrivateChatHistory(
+                        String message) {
 
                 String otherUser = message.substring(
-                                "/history ".length()).trim();
+                                "/history ".length())
+                                .trim();
 
                 if (otherUser.isEmpty()) {
 
@@ -834,9 +856,10 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                List<Message> history = chatHistoryService.getPrivateChatHistory(
-                                username,
-                                otherUser);
+                List<Message> history = chatHistoryService
+                                .getPrivateChatHistory(
+                                                username,
+                                                otherUser);
 
                 if (history.isEmpty()) {
 
@@ -858,11 +881,14 @@ public class ClientHandler implements Runnable {
 
                         String text = msg.getMessage();
 
-                        String time = msg.getTimestamp().toLocalTime()
+                        String time = msg.getTimestamp()
+                                        .toLocalTime()
                                         .toString();
 
                         sendMessage(
-                                        "[" + time + "] "
+                                        "["
+                                                        + time
+                                                        + "] "
                                                         + sender
                                                         + ": "
                                                         + text);
@@ -871,13 +897,16 @@ public class ClientHandler implements Runnable {
                 sendMessage(
                                 "==========================================");
         }
-        // =====================================================
-        // CHECK SUPPORTED FILE
-        // =====================================================
 
-        private boolean isSupportedFile(File file) {
+        // =========================================================
+        // SUPPORTED FILE TYPES
+        // =========================================================
 
-                String fileName = file.getName().toLowerCase();
+        private boolean isSupportedFile(
+                        File file) {
+
+                String fileName = file.getName()
+                                .toLowerCase();
 
                 return fileName.endsWith(".jpg")
                                 || fileName.endsWith(".jpeg")
@@ -890,18 +919,17 @@ public class ClientHandler implements Runnable {
                                 || fileName.endsWith(".m4a")
                                 || fileName.endsWith(".aac");
         }
-        // =====================================================
-        // GROUP CHAT HISTORY
-        // =====================================================
 
-        // =====================================================
+        // =========================================================
         // GROUP CHAT HISTORY
-        // =====================================================
+        // =========================================================
 
-        private void handleGroupChatHistory(String message) {
+        private void handleGroupChatHistory(
+                        String message) {
 
                 String groupName = message.substring(
-                                "/grouphistory ".length()).trim();
+                                "/grouphistory ".length())
+                                .trim();
 
                 if (groupName.isEmpty()) {
 
@@ -911,11 +939,8 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                // =============================================
-                // CHECK WHETHER GROUP EXISTS
-                // =============================================
-
-                if (!ChatServer.groupExists(groupName)) {
+                if (!ChatServer.groupExists(
+                                groupName)) {
 
                         sendMessage(
                                         "SYSTEM: Group '"
@@ -924,10 +949,6 @@ public class ClientHandler implements Runnable {
 
                         return;
                 }
-
-                // =============================================
-                // ACCESS VALIDATION
-                // =============================================
 
                 if (!ChatServer.isGroupMember(
                                 groupName,
@@ -942,12 +963,9 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                // =============================================
-                // RETRIEVE HISTORY
-                // =============================================
-
-                List<Message> history = chatHistoryService.getGroupChatHistory(
-                                groupName);
+                List<Message> history = chatHistoryService
+                                .getGroupChatHistory(
+                                                groupName);
 
                 if (history.isEmpty()) {
 
@@ -958,10 +976,6 @@ public class ClientHandler implements Runnable {
 
                         return;
                 }
-
-                // =============================================
-                // DISPLAY HISTORY
-                // =============================================
 
                 sendMessage(
                                 "========== GROUP HISTORY: "
@@ -991,9 +1005,9 @@ public class ClientHandler implements Runnable {
                                 "==========================================");
         }
 
-        // =====================================================
+        // =========================================================
         // DISCONNECT
-        // =====================================================
+        // =========================================================
 
         private void disconnect() {
 
@@ -1012,12 +1026,16 @@ public class ClientHandler implements Runnable {
                 closeConnection();
         }
 
+        // =========================================================
+        // CLOSE CONNECTION
+        // =========================================================
+
         private void closeConnection() {
 
                 try {
 
-                        if (clientSocket != null &&
-                                        !clientSocket.isClosed()) {
+                        if (clientSocket != null
+                                        && !clientSocket.isClosed()) {
 
                                 clientSocket.close();
                         }
@@ -1029,8 +1047,53 @@ public class ClientHandler implements Runnable {
                 }
         }
 
+        // =========================================================
+        // GET USERNAME
+        // =========================================================
+
         public String getUsername() {
 
                 return username;
+        }
+        // =========================================================
+        // REMOTE GROUP MEMBERSHIP HELPERS
+        // =========================================================
+
+        public void addRemoteGroup(
+                        String groupName) {
+
+                if (groupName != null
+                                && !groupName.trim().isEmpty()) {
+
+                        remoteJoinedGroups.add(
+                                        groupName.trim());
+                }
+        }
+
+        public void removeRemoteGroup(
+                        String groupName) {
+
+                if (groupName != null) {
+
+                        remoteJoinedGroups.remove(
+                                        groupName.trim());
+                }
+        }
+
+        public boolean isRemoteGroupMember(
+                        String groupName) {
+
+                if (groupName == null) {
+                        return false;
+                }
+
+                return remoteJoinedGroups.contains(
+                                groupName.trim());
+        }
+
+        public Set<String> getRemoteJoinedGroups() {
+
+                return Set.copyOf(
+                                remoteJoinedGroups);
         }
 }

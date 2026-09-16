@@ -9,83 +9,69 @@ import org.bson.Document;
 
 public class MongoDBConnection {
 
-    private static MongoClient mongoClient;
+        private static MongoClient mongoClient;
 
-    private static MongoDatabase database;
+        private static MongoDatabase database;
 
-    public static void connect() {
+        public static void connect() {
 
-        try {
+                try {
 
-            Dotenv dotenv =
-                    Dotenv.configure()
-                            .ignoreIfMissing()
-                            .load();
+                        Dotenv dotenv = Dotenv.configure()
+                                        .ignoreIfMissing()
+                                        .load();
 
-            String connectionString =
-                    dotenv.get("MONGODB_URI");
+                        String connectionString = dotenv.get("MONGODB_URI");
 
-            if (connectionString == null ||
-                    connectionString.isBlank()) {
+                        if (connectionString == null ||
+                                        connectionString.isBlank()) {
 
-                throw new IllegalStateException(
-                        "MONGODB_URI is not configured."
-                );
-            }
+                                throw new IllegalStateException(
+                                                "MONGODB_URI is not configured.");
+                        }
 
-            mongoClient =
-                    MongoClients.create(
-                            connectionString
-                    );
+                        mongoClient = MongoClients.create(
+                                        connectionString);
 
-            database =
-                    mongoClient.getDatabase(
-                            "CloudChat"
-                    );
+                        database = mongoClient.getDatabase(
+                                        "CloudChat");
 
-            // Test connection
-            database.runCommand(
-                    new Document(
-                            "ping",
-                            1
-                    )
-            );
+                        // Test connection
+                        database.runCommand(
+                                        new Document(
+                                                        "ping",
+                                                        1));
 
-            System.out.println(
-                    "MongoDB connected successfully."
-            );
+                        System.out.println(
+                                        "MongoDB connected successfully.");
 
-            System.out.println(
-                    "Database: CloudChat"
-            );
+                        System.out.println(
+                                        "Database: CloudChat");
 
-        } catch (Exception e) {
+                } catch (Exception e) {
 
-            System.out.println(
-                    "MongoDB connection failed."
-            );
+                        System.out.println(
+                                        "MongoDB connection failed.");
 
-            System.out.println(
-                    "Error: "
-                            + e.getMessage()
-            );
+                        System.out.println(
+                                        "Error: "
+                                                        + e.getMessage());
+                }
         }
-    }
 
-    public static MongoDatabase getDatabase() {
+        public static MongoDatabase getDatabase() {
 
-        return database;
-    }
-
-    public static void close() {
-
-        if (mongoClient != null) {
-
-            mongoClient.close();
-
-            System.out.println(
-                    "MongoDB connection closed."
-            );
+                return database;
         }
-    }
+
+        public static void close() {
+
+                if (mongoClient != null) {
+
+                        mongoClient.close();
+
+                        System.out.println(
+                                        "MongoDB connection closed.");
+                }
+        }
 }
