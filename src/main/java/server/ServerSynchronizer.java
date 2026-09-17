@@ -504,6 +504,28 @@ public class ServerSynchronizer {
                         return;
                 }
 
+                if (message.startsWith("GROUP_MEMBER_ADD:")) {
+
+                        processGroupMemberAdd(message);
+
+                        return;
+                }
+
+                if (message.startsWith("GROUP_MEMBER_REMOVE:")) {
+                        processGroupMemberRemove(message);
+                        return;
+                }
+
+                if (message.startsWith("GROUP_OWNER_ADD:")) {
+                        processGroupOwnerAdd(message);
+                        return;
+                }
+
+                if (message.startsWith("GROUP_OWNER_REMOVE:")) {
+                        processGroupOwnerRemove(message);
+                        return;
+                }
+
                 // =====================================================
                 // GROUP LEAVE
                 // =====================================================
@@ -786,6 +808,203 @@ public class ServerSynchronizer {
                 ChatServer.addRemoteGroupMember(
                                 groupName,
                                 username);
+        }
+
+        private void processGroupMemberAdd(
+                        String message) {
+
+                try {
+
+                        // Format:
+                        // GROUP_MEMBER_ADD:groupName:username
+
+                        String[] parts = message.split(":", 3);
+
+                        if (parts.length < 3) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid GROUP_MEMBER_ADD message.");
+
+                                return;
+                        }
+
+                        String groupName = parts[1].trim();
+                        String username = parts[2].trim();
+
+                        if (groupName.isEmpty()
+                                        || username.isEmpty()) {
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[SYNC] Remote group member added: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        /*
+                         * IMPORTANT:
+                         *
+                         * Do NOT call addPersistentGroupMember()
+                         * here because that method writes to MongoDB.
+                         *
+                         * MongoDB has already been updated by
+                         * the originating server.
+                         *
+                         * We only update this server's in-memory
+                         * persistent membership state.
+                         */
+
+                        ChatServer.addSyncedPersistentGroupMember(
+                                        groupName,
+                                        username);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing "
+                                                        + "GROUP_MEMBER_ADD: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // PROCESS GROUP MEMBER REMOVE
+        // =========================================================
+
+        private void processGroupMemberRemove(String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 3);
+
+                        if (parts.length < 3) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid GROUP_MEMBER_REMOVE message.");
+
+                                return;
+                        }
+
+                        String groupName = parts[1].trim();
+
+                        String username = parts[2].trim();
+
+                        if (groupName.isEmpty()
+                                        || username.isEmpty()) {
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[SYNC] Remote group member removed: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        ChatServer.removeSyncedPersistentGroupMember(
+                                        groupName,
+                                        username);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing GROUP_MEMBER_REMOVE: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // PROCESS GROUP OWNER ADD
+        // =========================================================
+
+        private void processGroupOwnerAdd(String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 3);
+
+                        if (parts.length < 3) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid GROUP_OWNER_ADD message.");
+
+                                return;
+                        }
+
+                        String groupName = parts[1].trim();
+
+                        String username = parts[2].trim();
+
+                        if (groupName.isEmpty()
+                                        || username.isEmpty()) {
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[SYNC] Remote group owner added: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        ChatServer.addSyncedGroupOwner(
+                                        groupName,
+                                        username);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing GROUP_OWNER_ADD: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // PROCESS GROUP OWNER REMOVE
+        // =========================================================
+
+        private void processGroupOwnerRemove(String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 3);
+
+                        if (parts.length < 3) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid GROUP_OWNER_REMOVE message.");
+
+                                return;
+                        }
+
+                        String groupName = parts[1].trim();
+
+                        String username = parts[2].trim();
+
+                        if (groupName.isEmpty()
+                                        || username.isEmpty()) {
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[SYNC] Remote group owner removed: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        ChatServer.removeSyncedGroupOwner(
+                                        groupName,
+                                        username);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing GROUP_OWNER_REMOVE: "
+                                                        + e.getMessage());
+                }
         }
 
         // =========================================================
@@ -1781,6 +2000,230 @@ public class ServerSynchronizer {
 
                         System.out.println(
                                         "[SYNC] Failed to send group file route request: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        // =========================================================
+        // SEND GROUP MEMBER ADD
+        // =========================================================
+
+        // =========================================================
+        // SEND GROUP MEMBER ADD
+        // =========================================================
+
+        public boolean sendGroupMemberAdd(
+                        String groupName,
+                        String username) {
+
+                try {
+
+                        if (!connected) {
+
+                                System.out.println(
+                                                "[SYNC] Cannot send GROUP_MEMBER_ADD. "
+                                                                + "Server not connected.");
+
+                                return false;
+                        }
+
+                        if (groupName == null
+                                        || username == null
+                                        || groupName.trim().isEmpty()
+                                        || username.trim().isEmpty()) {
+
+                                return false;
+                        }
+
+                        groupName = groupName.trim();
+                        username = username.trim();
+
+                        String message = "GROUP_MEMBER_ADD:"
+                                        + groupName
+                                        + ":"
+                                        + username;
+
+                        send(message);
+
+                        System.out.println(
+                                        "[SYNC] GROUP_MEMBER_ADD sent: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Failed to send GROUP_MEMBER_ADD: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        // =========================================================
+        // SEND GROUP MEMBER REMOVE
+        // =========================================================
+
+        public boolean sendGroupMemberRemove(
+                        String groupName,
+                        String username) {
+
+                try {
+
+                        if (!connected) {
+
+                                System.out.println(
+                                                "[SYNC] Cannot send GROUP_MEMBER_REMOVE. "
+                                                                + "Server not connected.");
+
+                                return false;
+                        }
+
+                        if (groupName == null
+                                        || username == null
+                                        || groupName.trim().isEmpty()
+                                        || username.trim().isEmpty()) {
+
+                                return false;
+                        }
+
+                        groupName = groupName.trim();
+                        username = username.trim();
+
+                        String message = "GROUP_MEMBER_REMOVE:"
+                                        + groupName
+                                        + ":"
+                                        + username;
+
+                        send(message);
+
+                        System.out.println(
+                                        "[SYNC] GROUP_MEMBER_REMOVE sent: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Failed to send GROUP_MEMBER_REMOVE: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        // =========================================================
+        // SEND GROUP OWNER ADD
+        // =========================================================
+
+        public boolean sendGroupOwnerAdd(
+                        String groupName,
+                        String username) {
+
+                try {
+
+                        if (!connected) {
+
+                                System.out.println(
+                                                "[SYNC] Cannot send GROUP_OWNER_ADD. "
+                                                                + "Server not connected.");
+
+                                return false;
+                        }
+
+                        if (groupName == null
+                                        || username == null
+                                        || groupName.trim().isEmpty()
+                                        || username.trim().isEmpty()) {
+
+                                return false;
+                        }
+
+                        groupName = groupName.trim();
+                        username = username.trim();
+
+                        String message = "GROUP_OWNER_ADD:"
+                                        + groupName
+                                        + ":"
+                                        + username;
+
+                        send(message);
+
+                        System.out.println(
+                                        "[SYNC] GROUP_OWNER_ADD sent: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Failed to send GROUP_OWNER_ADD: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        // =========================================================
+        // SEND GROUP OWNER REMOVE
+        // =========================================================
+
+        public boolean sendGroupOwnerRemove(
+                        String groupName,
+                        String username) {
+
+                try {
+
+                        if (!connected) {
+
+                                System.out.println(
+                                                "[SYNC] Cannot send GROUP_OWNER_REMOVE. "
+                                                                + "Server not connected.");
+
+                                return false;
+                        }
+
+                        if (groupName == null
+                                        || username == null
+                                        || groupName.trim().isEmpty()
+                                        || username.trim().isEmpty()) {
+
+                                return false;
+                        }
+
+                        groupName = groupName.trim();
+                        username = username.trim();
+
+                        String message = "GROUP_OWNER_REMOVE:"
+                                        + groupName
+                                        + ":"
+                                        + username;
+
+                        send(message);
+
+                        System.out.println(
+                                        "[SYNC] GROUP_OWNER_REMOVE sent: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Failed to send GROUP_OWNER_REMOVE: "
                                                         + e.getMessage());
 
                         return false;

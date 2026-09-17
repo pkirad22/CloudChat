@@ -1955,8 +1955,17 @@ public class ChatServer {
         public static boolean groupExists(
                         String groupName) {
 
+                if (groupName == null
+                                || groupName.trim().isEmpty()) {
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+
                 return groups.containsKey(groupName)
-                                || remoteGroupMembers.containsKey(groupName);
+                                || remoteGroupMembers.containsKey(groupName)
+                                || persistentGroupMembers.containsKey(groupName);
         }
 
         // =========================================================
@@ -2084,6 +2093,164 @@ public class ChatServer {
                                                 + groupName);
 
                 return true;
+        }
+
+        public static void addSyncedPersistentGroupMember(
+                        String groupName,
+                        String username) {
+
+                if (groupName == null
+                                || username == null
+                                || groupName.trim().isEmpty()
+                                || username.trim().isEmpty()) {
+
+                        return;
+                }
+
+                groupName = groupName.trim();
+                username = username.trim();
+
+                Set<String> members = persistentGroupMembers.computeIfAbsent(
+                                groupName,
+                                key -> ConcurrentHashMap.newKeySet());
+
+                members.add(username);
+
+                System.out.println(
+                                "[SYNC] Persistent group member added: "
+                                                + username
+                                                + " -> "
+                                                + groupName);
+        }
+
+        // =========================================================
+        // REMOVE SYNCED PERSISTENT GROUP MEMBER
+        // =========================================================
+
+        public static boolean removeSyncedPersistentGroupMember(
+                        String groupName,
+                        String username) {
+
+                if (groupName == null
+                                || username == null
+                                || groupName.trim().isEmpty()
+                                || username.trim().isEmpty()) {
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+                username = username.trim();
+
+                Set<String> members = persistentGroupMembers.get(groupName);
+
+                if (members == null) {
+
+                        System.out.println(
+                                        "[SYNC] Group not found in persistent membership: "
+                                                        + groupName);
+
+                        return false;
+                }
+
+                boolean removed = members.remove(username);
+
+                if (removed) {
+
+                        System.out.println(
+                                        "[SYNC] Persistent group member removed: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+                }
+
+                return removed;
+        }
+
+        // =========================================================
+        // ADD SYNCED GROUP OWNER
+        // =========================================================
+
+        public static boolean addSyncedGroupOwner(
+                        String groupName,
+                        String username) {
+
+                if (groupName == null
+                                || username == null
+                                || groupName.trim().isEmpty()
+                                || username.trim().isEmpty()) {
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+                username = username.trim();
+
+                if (groupService == null) {
+
+                        System.out.println(
+                                        "[SYNC] GroupService is not initialized.");
+
+                        return false;
+                }
+
+                boolean added = groupService.addOwner(
+                                groupName,
+                                username);
+
+                if (added) {
+
+                        System.out.println(
+                                        "[SYNC] Group owner added: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+                }
+
+                return added;
+        }
+
+        // =========================================================
+        // REMOVE SYNCED GROUP OWNER
+        // =========================================================
+
+        public static boolean removeSyncedGroupOwner(
+                        String groupName,
+                        String username) {
+
+                if (groupName == null
+                                || username == null
+                                || groupName.trim().isEmpty()
+                                || username.trim().isEmpty()) {
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+                username = username.trim();
+
+                if (groupService == null) {
+
+                        System.out.println(
+                                        "[SYNC] GroupService is not initialized.");
+
+                        return false;
+                }
+
+                boolean removed = groupService.removeOwner(
+                                groupName,
+                                username);
+
+                if (removed) {
+
+                        System.out.println(
+                                        "[SYNC] Group owner removed: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+                }
+
+                return removed;
         }
 
         // =========================================================

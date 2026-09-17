@@ -14,6 +14,7 @@ import model.Message;
 
 import service.UserService;
 import service.ChatHistoryService;
+import service.GroupService;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -56,6 +57,7 @@ public class ClientHandler implements Runnable {
 
         private final ChatHistoryService chatHistoryService;
 
+        private final GroupService groupService;
         // =========================================================
         // CONSTRUCTOR
         // =========================================================
@@ -65,6 +67,8 @@ public class ClientHandler implements Runnable {
                 this.clientSocket = clientSocket;
 
                 this.userService = new UserService();
+
+                this.groupService = new GroupService();
 
                 this.chatHistoryService = new ChatHistoryService();
         }
@@ -350,7 +354,7 @@ public class ClientHandler implements Runnable {
                                 // JOIN GROUP
                                 // =================================================
 
-                                if (message.startsWith("/join ")) {
+                                if (message.startsWith("/joingroup ")) {
 
                                         handleJoinGroup(message);
 
@@ -376,6 +380,68 @@ public class ClientHandler implements Runnable {
 
                                         handleGroupMembers(message);
 
+                                        continue;
+                                }
+
+                                // =================================================
+                                // GROUP OWNER MANAGEMENT
+                                // =================================================
+
+                                if (message.startsWith("/addmember ")) {
+
+                                        handleAddMember(message);
+
+                                        continue;
+                                }
+
+                                if (message.startsWith("/removemember ")) {
+
+                                        handleRemoveMember(message);
+
+                                        continue;
+                                }
+
+                                if (message.startsWith("/promote ")) {
+
+                                        handlePromoteMember(message);
+
+                                        continue;
+                                }
+
+                                if (message.startsWith("/demote ")) {
+
+                                        handleDemoteMember(message);
+
+                                        continue;
+                                }
+
+                                if (message.startsWith("/requestjoin ")) {
+                                        handleRequestJoin(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/requests ")) {
+                                        handleRequests(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/approve ")) {
+                                        handleApprove(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/reject ")) {
+                                        handleReject(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/join ")) {
+                                        handleJoin(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/setaccess ")) {
+                                        handleSetAccess(message);
                                         continue;
                                 }
 
@@ -950,6 +1016,1087 @@ public class ClientHandler implements Runnable {
         }
 
         // =========================================================
+        // ADD MEMBER
+        // =========================================================
+
+        private void handleAddMember(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+                        sendMessage(
+                                        "SYSTEM: Use /addmember groupname username");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+                String targetUser = parts[2].trim();
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                if (targetUser.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username cannot be empty.");
+
+                        return;
+                }
+
+                if (!userService.userExists(targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '" + targetUser
+                                                        + "' does not exist.");
+
+                        return;
+                }
+
+                if (groupService.isMember(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '" + targetUser
+                                                        + "' is already a member.");
+
+                        return;
+                }
+
+                boolean added = groupService.addMember(
+                                groupName,
+                                targetUser);
+
+                if (added) {
+
+                        // ---------------------------------------------------------
+                        // UPDATE LOCAL PERSISTENT MEMORY
+                        // ---------------------------------------------------------
+
+                        ChatServer.addSyncedPersistentGroupMember(
+                                        groupName,
+                                        targetUser);
+
+                        // ---------------------------------------------------------
+                        // SYNCHRONIZE MEMBER WITH OTHER SERVER
+                        // ---------------------------------------------------------
+
+                        ChatServer.getServerSynchronizer().sendGroupMemberAdd(
+                                        groupName,
+                                        targetUser);
+
+                        sendMessage(
+                                        "SYSTEM: User '" + targetUser
+                                                        + "' added to group '"
+                                                        + groupName + "'.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to add user.");
+                }
+        }
+
+        // =========================================================
+        // REMOVE MEMBER
+        // =========================================================
+
+        private void handleRemoveMember(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+                        sendMessage(
+                                        "SYSTEM: Use /removemember groupname username");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+                String targetUser = parts[2].trim();
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                if (targetUser.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username cannot be empty.");
+
+                        return;
+                }
+
+                if (!groupService.isMember(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is not a member of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                if (groupService.isOwner(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: Cannot remove owner. "
+                                                        + "Demote the owner first.");
+
+                        return;
+                }
+
+                boolean removed = groupService.removeMember(
+                                groupName,
+                                targetUser);
+
+                if (removed) {
+
+                        ChatServer.removePersistentGroupMember(
+                                        groupName,
+                                        targetUser);
+
+                        ChatServer.getServerSynchronizer()
+                                        .sendGroupMemberRemove(
+                                                        groupName,
+                                                        targetUser);
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' removed from group '"
+                                                        + groupName
+                                                        + "'.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to remove user.");
+                }
+        }
+
+        // =========================================================
+        // PROMOTE MEMBER TO OWNER
+        // =========================================================
+
+        private void handlePromoteMember(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+                        sendMessage(
+                                        "SYSTEM: Use /promote groupname username");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+                String targetUser = parts[2].trim();
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                if (targetUser.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username cannot be empty.");
+
+                        return;
+                }
+
+                if (!groupService.isMember(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is not a member of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                if (groupService.isOwner(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '" + targetUser
+                                                        + "' is already an owner.");
+
+                        return;
+                }
+
+                boolean promoted = groupService.promoteToOwner(
+                                groupName,
+                                targetUser);
+
+                if (promoted) {
+
+                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                        if (synchronizer != null) {
+
+                                synchronizer.sendGroupOwnerAdd(
+                                                groupName,
+                                                targetUser);
+                        }
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is now an owner of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to promote user.");
+                }
+        }
+
+        // =========================================================
+        // DEMOTE OWNER
+        // =========================================================
+
+        private void handleDemoteMember(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+                        sendMessage(
+                                        "SYSTEM: Use /demote groupname username");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+                String targetUser = parts[2].trim();
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                if (targetUser.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username cannot be empty.");
+
+                        return;
+                }
+
+                if (!groupService.isOwner(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is not a member of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                if (!groupService.isOwner(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is not an owner.");
+
+                        return;
+                }
+
+                boolean demoted = groupService.demoteOwner(
+                                groupName,
+                                targetUser);
+
+                if (demoted) {
+
+                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                        if (synchronizer != null) {
+
+                                synchronizer.sendGroupOwnerRemove(
+                                                groupName,
+                                                targetUser);
+                        }
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is no longer an owner of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to demote owner.");
+
+                        sendMessage(
+                                        "SYSTEM: At least one owner must remain.");
+                }
+        }
+
+        // =========================================================
+        // REQUEST TO JOIN GROUP
+        // =========================================================
+
+        private void handleRequestJoin(String message) {
+
+                String[] parts = message.split(" ", 2);
+
+                if (parts.length < 2) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /requestjoin groupname");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                if (groupName.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Group name cannot be empty.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // CHECK GROUP EXISTS
+                // -------------------------------------------------
+
+                if (!groupService.groupExists(groupName)) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' does not exist.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // CHECK ACCESS MODE
+                // -------------------------------------------------
+
+                String accessMode = groupService.getAccessMode(groupName);
+
+                if (accessMode == null) {
+
+                        accessMode = "REQUEST";
+                }
+
+                accessMode = accessMode.trim().toUpperCase();
+
+                // -------------------------------------------------
+                // REQUEST MODE
+                // -------------------------------------------------
+
+                if (accessMode.equals("REQUEST")) {
+
+                        // ---------------------------------------------
+                        // CHECK ALREADY MEMBER
+                        // ---------------------------------------------
+
+                        if (groupService.isMember(
+                                        groupName,
+                                        username)) {
+
+                                sendMessage(
+                                                "SYSTEM: You are already a member of group '"
+                                                                + groupName
+                                                                + "'.");
+
+                                return;
+                        }
+
+                        // ---------------------------------------------
+                        // CHECK EXISTING REQUEST
+                        // ---------------------------------------------
+
+                        if (groupService.hasJoinRequest(
+                                        groupName,
+                                        username)) {
+
+                                sendMessage(
+                                                "SYSTEM: You already have a pending join request for group '"
+                                                                + groupName
+                                                                + "'.");
+
+                                return;
+                        }
+
+                        // ---------------------------------------------
+                        // CREATE REQUEST
+                        // ---------------------------------------------
+
+                        boolean requested = groupService.addJoinRequest(
+                                        groupName,
+                                        username);
+
+                        if (requested) {
+
+                                sendMessage(
+                                                "SYSTEM: Join request sent for group '"
+                                                                + groupName
+                                                                + "'.");
+
+                        } else {
+
+                                sendMessage(
+                                                "SYSTEM: Unable to send join request.");
+                        }
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // CODE MODE
+                // -------------------------------------------------
+
+                if (accessMode.equals("CODE")) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' requires a join code.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /join "
+                                                        + groupName
+                                                        + " <joinCode>");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // OPEN MODE
+                // -------------------------------------------------
+
+                if (accessMode.equals("OPEN")) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' is open for direct joining.");
+
+                        sendMessage(
+                                        "SYSTEM: No join request is required.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // UNKNOWN MODE
+                // -------------------------------------------------
+
+                sendMessage(
+                                "SYSTEM: Invalid access mode configured for group '"
+                                                + groupName
+                                                + "'.");
+
+        }
+
+        // =========================================================
+        // VIEW PENDING JOIN REQUESTS
+        // =========================================================
+
+        private void handleRequests(String message) {
+
+                String[] parts = message.split(" ", 2);
+
+                if (parts.length < 2) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /requests groupname");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                if (groupName.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Group name cannot be empty.");
+
+                        return;
+                }
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                List<String> pendingRequests = groupService.getPendingRequests(
+                                groupName);
+
+                if (pendingRequests.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: No pending join requests for group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                StringBuilder response = new StringBuilder();
+
+                response.append(
+                                "PENDING REQUESTS [")
+                                .append(groupName)
+                                .append("]: ");
+
+                for (String username : pendingRequests) {
+
+                        response.append(username)
+                                        .append(" ");
+                }
+
+                sendMessage(
+                                response.toString().trim());
+        }
+
+        // =========================================================
+        // APPROVE JOIN REQUEST
+        // =========================================================
+
+        private void handleApprove(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /approve groupname username");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                String targetUser = parts[2].trim();
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                if (targetUser.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username cannot be empty.");
+
+                        return;
+                }
+
+                if (!userService.userExists(targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' does not exist.");
+
+                        return;
+                }
+
+                if (groupService.isMember(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' is already a member.");
+
+                        return;
+                }
+
+                if (!groupService.hasJoinRequest(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: No pending join request found for user '"
+                                                        + targetUser
+                                                        + "'.");
+
+                        return;
+                }
+
+                boolean approved = groupService.approveJoinRequest(
+                                groupName,
+                                targetUser);
+
+                if (approved) {
+
+                        /*
+                         * Update local in-memory membership.
+                         */
+                        ChatServer.addSyncedPersistentGroupMember(
+                                        groupName,
+                                        targetUser);
+
+                        /*
+                         * Synchronize membership with
+                         * the other server.
+                         */
+                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                        if (synchronizer != null) {
+
+                                synchronizer.sendGroupMemberAdd(
+                                                groupName,
+                                                targetUser);
+                        }
+
+                        sendMessage(
+                                        "SYSTEM: User '"
+                                                        + targetUser
+                                                        + "' approved and added to group '"
+                                                        + groupName
+                                                        + "'.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to approve join request.");
+                }
+        }
+
+        // =========================================================
+        // REJECT JOIN REQUEST
+        // =========================================================
+
+        private void handleReject(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /reject groupname username");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                String targetUser = parts[2].trim();
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                if (targetUser.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username cannot be empty.");
+
+                        return;
+                }
+
+                if (!groupService.hasJoinRequest(
+                                groupName,
+                                targetUser)) {
+
+                        sendMessage(
+                                        "SYSTEM: No pending join request found for user '"
+                                                        + targetUser
+                                                        + "'.");
+                        return;
+                }
+
+                boolean rejected = groupService.rejectJoinRequest(
+                                groupName,
+                                targetUser);
+
+                if (rejected) {
+
+                        sendMessage(
+                                        "SYSTEM: Join request from '"
+                                                        + targetUser
+                                                        + "' rejected for group '"
+                                                        + groupName
+                                                        + "'.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to reject join request.");
+                }
+        }
+
+        // =========================================================
+        // JOIN GROUP USING JOIN CODE
+        // =========================================================
+
+        // =========================================================
+        // JOIN GROUP
+        // =========================================================
+
+        private void handleJoin(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 2) {
+
+                        sendMessage(
+                                        "SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /join groupname [joinCode]");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                String joinCode = null;
+
+                if (parts.length == 3) {
+                        joinCode = parts[2].trim();
+                }
+
+                if (groupName.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Group name cannot be empty.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // CHECK GROUP EXISTS
+                // -------------------------------------------------
+
+                if (!groupService.groupExists(groupName)) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' does not exist.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // CHECK ACCESS MODE
+                // -------------------------------------------------
+
+                String accessMode = groupService.getAccessMode(groupName);
+
+                if (accessMode == null) {
+                        accessMode = "REQUEST";
+                }
+
+                accessMode = accessMode.trim().toUpperCase();
+
+                // -------------------------------------------------
+                // ALREADY MEMBER
+                // -------------------------------------------------
+
+                if (groupService.isMember(
+                                groupName,
+                                username)) {
+
+                        sendMessage(
+                                        "SYSTEM: You are already a member of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                // =================================================
+                // OPEN MODE
+                // =================================================
+
+                if (accessMode.equals("OPEN")) {
+
+                        // A join code must NOT be accepted in OPEN mode.
+                        if (joinCode != null && !joinCode.isEmpty()) {
+
+                                sendMessage(
+                                                "SYSTEM: Group '"
+                                                                + groupName
+                                                                + "' is OPEN.");
+
+                                sendMessage(
+                                                "SYSTEM: Join code is not required.");
+
+                                sendMessage(
+                                                "SYSTEM: Use /join "
+                                                                + groupName);
+
+                                return;
+                        }
+
+                        // ---------------------------------------------
+                        // DIRECT JOIN
+                        // ---------------------------------------------
+
+                        boolean joined = groupService.addMember(
+                                        groupName,
+                                        username);
+
+                        if (!joined) {
+
+                                sendMessage(
+                                                "SYSTEM: Unable to join group '"
+                                                                + groupName
+                                                                + "'.");
+
+                                return;
+                        }
+
+                        // ---------------------------------------------
+                        // UPDATE LOCAL PERSISTENT MEMBERSHIP
+                        // ---------------------------------------------
+
+                        ChatServer.addSyncedPersistentGroupMember(
+                                        groupName,
+                                        username);
+
+                        // ---------------------------------------------
+                        // SYNCHRONIZE OTHER SERVER
+                        // ---------------------------------------------
+
+                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                        if (synchronizer != null) {
+
+                                synchronizer.sendGroupMemberAdd(
+                                                groupName,
+                                                username);
+                        }
+
+                        sendMessage(
+                                        "SYSTEM: Successfully joined group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                // =================================================
+                // CODE MODE
+                // =================================================
+
+                if (accessMode.equals("CODE")) {
+
+                        if (joinCode == null
+                                        || joinCode.isEmpty()) {
+
+                                sendMessage(
+                                                "SYSTEM: Group '"
+                                                                + groupName
+                                                                + "' requires a join code.");
+
+                                sendMessage(
+                                                "SYSTEM: Use /join "
+                                                                + groupName
+                                                                + " <joinCode>");
+
+                                return;
+                        }
+
+                        boolean joined = groupService.joinGroupWithCode(
+                                        groupName,
+                                        username,
+                                        joinCode);
+
+                        if (!joined) {
+
+                                sendMessage(
+                                                "SYSTEM: Invalid join code or unable to join group.");
+
+                                return;
+                        }
+
+                        // ---------------------------------------------
+                        // UPDATE LOCAL PERSISTENT MEMBERSHIP
+                        // ---------------------------------------------
+
+                        ChatServer.addSyncedPersistentGroupMember(
+                                        groupName,
+                                        username);
+
+                        // ---------------------------------------------
+                        // SYNCHRONIZE OTHER SERVER
+                        // ---------------------------------------------
+
+                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                        if (synchronizer != null) {
+
+                                synchronizer.sendGroupMemberAdd(
+                                                groupName,
+                                                username);
+                        }
+
+                        sendMessage(
+                                        "SYSTEM: Successfully joined group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                // =================================================
+                // REQUEST MODE
+                // =================================================
+
+                if (accessMode.equals("REQUEST")) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' uses REQUEST access mode.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /requestjoin "
+                                                        + groupName);
+
+                        return;
+                }
+
+                // =================================================
+                // INVALID MODE
+                // =================================================
+
+                sendMessage(
+                                "SYSTEM: Invalid access mode configured for group '"
+                                                + groupName
+                                                + "'.");
+        }
+        // =========================================================
+        // SET GROUP ACCESS MODE
+        // =========================================================
+
+        private void handleSetAccess(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage(
+                                        "SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /setaccess groupname mode");
+
+                        sendMessage(
+                                        "SYSTEM: Modes: REQUEST, CODE, OPEN");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                String accessMode = parts[2].trim().toUpperCase();
+
+                if (groupName.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Group name cannot be empty.");
+
+                        return;
+                }
+
+                if (accessMode.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Access mode cannot be empty.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // OWNER CHECK
+                // -------------------------------------------------
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                // -------------------------------------------------
+                // VALIDATE MODE
+                // -------------------------------------------------
+
+                if (!accessMode.equals("REQUEST")
+                                && !accessMode.equals("CODE")
+                                && !accessMode.equals("OPEN")) {
+
+                        sendMessage(
+                                        "SYSTEM: Invalid access mode.");
+
+                        sendMessage(
+                                        "SYSTEM: Available modes: REQUEST, CODE, OPEN");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // UPDATE DATABASE
+                // -------------------------------------------------
+
+                boolean updated = groupService.setAccessMode(
+                                groupName,
+                                accessMode);
+
+                if (!updated) {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to change access mode.");
+
+                        return;
+                }
+
+                sendMessage(
+                                "SYSTEM: Access mode for group '"
+                                                + groupName
+                                                + "' changed to "
+                                                + accessMode
+                                                + ".");
+        }
+
+        // =========================================================
         // PRIVATE MESSAGE
         // =========================================================
 
@@ -1197,6 +2344,96 @@ public class ClientHandler implements Runnable {
 
                 sendMessage(
                                 "==========================================");
+        }
+
+        // =========================================================
+        // GROUP ROLE HELPERS
+        // =========================================================
+
+        private boolean isGroupMember(
+                        String groupName) {
+
+                return groupService.isMember(
+                                groupName,
+                                username);
+        }
+
+        // =========================================================
+        // CHECK GROUP OWNER
+        // =========================================================
+
+        private boolean isGroupOwner(
+                        String groupName) {
+
+                return groupService.isOwner(
+                                groupName,
+                                username);
+        }
+
+        // =========================================================
+        // OWNER AUTHORIZATION
+        // =========================================================
+
+        private boolean requireGroupOwner(
+                        String groupName) {
+
+                if (groupName == null
+                                || groupName.trim().isEmpty()) {
+
+                        sendMessage(
+                                        "ACCESS_DENIED: Group name cannot be empty.");
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+
+                // ---------------------------------------------
+                // Check group exists
+                // ---------------------------------------------
+
+                if (!groupService.groupExists(
+                                groupName)) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' does not exist.");
+
+                        return false;
+                }
+
+                // ---------------------------------------------
+                // Check membership
+                // ---------------------------------------------
+
+                if (!isGroupMember(
+                                groupName)) {
+
+                        sendMessage(
+                                        "ACCESS_DENIED: You are not a member "
+                                                        + "of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return false;
+                }
+
+                // ---------------------------------------------
+                // Check owner role
+                // ---------------------------------------------
+
+                if (!isGroupOwner(
+                                groupName)) {
+
+                        sendMessage(
+                                        "ACCESS_DENIED: Only group owners "
+                                                        + "can perform this operation.");
+
+                        return false;
+                }
+
+                return true;
         }
 
         // =========================================================
