@@ -2633,4 +2633,9 @@ public class ChatServer {
 
                 return serverSynchronizer;
         }
+
+        public static Map<String, ClientHandler> getOnlineUsers() {
+
+                return onlineUsers;
+        }
 }

@@ -339,6 +339,122 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
+                                if (message.equalsIgnoreCase("/load")) {
+
+                                        ServerLoadMonitor loadMonitor = new ServerLoadMonitor();
+
+                                        loadMonitor.printLoadInformation();
+
+                                        sendMessage(
+                                                        "SYSTEM: Load information printed on server console.");
+
+                                        continue;
+                                }
+
+                                if (message.equalsIgnoreCase("/balance")) {
+
+                                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                                        if (synchronizer == null) {
+
+                                                sendMessage(
+                                                                "SYSTEM: Server synchronizer is not available.");
+
+                                                continue;
+                                        }
+
+                                        LoadBalancer loadBalancer = new LoadBalancer(synchronizer);
+
+                                        loadBalancer.printDecision();
+
+                                        sendMessage(
+                                                        "SYSTEM: Load balancing decision printed on server console.");
+
+                                        continue;
+                                }
+
+                                // =================================================
+                                // AUTOMATIC LOAD-BALANCED CONNECTION
+                                // =================================================
+
+                                if (message.equalsIgnoreCase("/balanceconnect")) {
+
+                                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                                        if (synchronizer == null) {
+
+                                                sendMessage(
+                                                                "SYSTEM: Server synchronizer is not available.");
+
+                                                continue;
+                                        }
+
+                                        LoadBalancer loadBalancer = new LoadBalancer(synchronizer);
+
+                                        String selectedServer = loadBalancer.selectServer();
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "[AUTO-BALANCE] Selected server: "
+                                                                        + selectedServer);
+
+                                        // =============================================
+                                        // LOCAL SERVER SELECTED
+                                        // =============================================
+
+                                        if (selectedServer.equals(
+                                                        synchronizer.isPrimaryServer()
+                                                                        ? "SERVER1"
+                                                                        : "SERVER2")) {
+
+                                                sendMessage(
+                                                                "SYSTEM: Current server has lower load.");
+
+                                                sendMessage(
+                                                                "SYSTEM: You are already connected to the selected server.");
+
+                                                continue;
+                                        }
+
+                                        // =============================================
+                                        // REMOTE SERVER SELECTED
+                                        // =============================================
+
+                                        String targetHost = "localhost";
+
+                                        int targetPort;
+
+                                        if (selectedServer.equals("SERVER1")) {
+
+                                                targetPort = 5000;
+
+                                        } else if (selectedServer.equals("SERVER2")) {
+
+                                                targetPort = 5002;
+
+                                        } else {
+
+                                                sendMessage(
+                                                                "SYSTEM: Unable to determine target server.");
+
+                                                continue;
+                                        }
+
+                                        System.out.println(
+                                                        "[AUTO-BALANCE] Redirecting client to "
+                                                                        + targetHost
+                                                                        + ":"
+                                                                        + targetPort);
+
+                                        sendMessage(
+                                                        "CONNECT_SERVER:"
+                                                                        + targetHost
+                                                                        + ":"
+                                                                        + targetPort);
+
+                                        continue;
+                                }
+
                                 // =================================================
                                 // CREATE GROUP
                                 // =================================================

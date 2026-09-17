@@ -66,6 +66,8 @@ public class ChatClient {
 
         private static volatile boolean authenticated = false;
 
+        private static volatile boolean loadBalanceRedirecting = false;
+
         // =========================================================
         // LOGIN INFORMATION
         // Stored only in memory for automatic re-authentication
@@ -668,6 +670,62 @@ public class ChatClient {
                                                                                 serverMessage));
 
                                                 // =================================================
+                                                // LOAD BALANCING REDIRECT
+                                                // =================================================
+
+                                                if (serverMessage.startsWith("CONNECT_SERVER:")) {
+
+                                                        try {
+
+                                                                String[] parts = serverMessage.split(":", 3);
+
+                                                                if (parts.length < 3) {
+
+                                                                        System.out.println(
+                                                                                        "[AUTO-BALANCE] Invalid server redirect.");
+
+                                                                        continue;
+                                                                }
+
+                                                                String targetHost = parts[1].trim();
+
+                                                                int targetPort = Integer.parseInt(parts[2].trim());
+
+                                                                System.out.println();
+
+                                                                System.out.println(
+                                                                                "[AUTO-BALANCE] Server redirect received.");
+
+                                                                System.out.println(
+                                                                                "[AUTO-BALANCE] Target: "
+                                                                                                + targetHost
+                                                                                                + ":"
+                                                                                                + targetPort);
+
+                                                                // IMPORTANT:
+                                                                // This connection change is intentional.
+                                                                // Do not trigger failover from the old
+                                                                // receive thread after the redirect.
+
+                                                                loadBalanceRedirecting = true;
+
+                                                                performLoadBalancedReconnect(
+                                                                                targetHost,
+                                                                                targetPort);
+
+                                                                break;
+
+                                                        } catch (Exception e) {
+
+                                                                loadBalanceRedirecting = false;
+
+                                                                System.out.println(
+                                                                                "[AUTO-BALANCE] Invalid redirect: "
+                                                                                                + e.getMessage());
+                                                        }
+                                                }
+
+                                                // =================================================
                                                 // FILE TRANSFER
                                                 // =================================================
 
@@ -700,7 +758,8 @@ public class ChatClient {
                                         // =====================================================
 
                                         if (!exiting
-                                                        && !reconnecting) {
+                                                        && !reconnecting
+                                                        && !loadBalanceRedirecting) {
 
                                                 System.out.println();
                                                 System.out.println(
@@ -717,7 +776,8 @@ public class ChatClient {
                         } catch (IOException e) {
 
                                 if (!exiting
-                                                && !reconnecting) {
+                                                && !reconnecting
+                                                && !loadBalanceRedirecting) {
 
                                         System.out.println();
                                         System.out.println(
@@ -901,6 +961,8 @@ public class ChatClient {
 
                                         printCommandMenu();
 
+                                        loadBalanceRedirecting = false;
+
                                         return;
                                 }
 
@@ -937,6 +999,191 @@ public class ChatClient {
                 }
 
                 reconnecting = false;
+        }
+
+        // =========================================================
+        // AUTOMATIC LOAD-BALANCED RECONNECTION
+        // =========================================================
+
+        private static synchronized void performLoadBalancedReconnect(
+                        String targetHost,
+                        int targetPort) {
+
+                if (exiting || reconnecting) {
+                        return;
+                }
+
+                reconnecting = true;
+                authenticated = false;
+
+                int oldPort = currentServerPort;
+
+                System.out.println();
+                System.out.println(
+                                "=================================");
+
+                System.out.println(
+                                "       AUTOMATIC LOAD BALANCING");
+
+                System.out.println(
+                                "=================================");
+
+                System.out.println(
+                                "Current server: "
+                                                + serverNameFromPort(oldPort));
+
+                System.out.println(
+                                "Selected server: "
+                                                + serverNameFromPort(targetPort));
+
+                System.out.println(
+                                "Address: "
+                                                + targetHost
+                                                + ":"
+                                                + targetPort);
+
+                // =====================================================
+                // CLOSE CURRENT CONNECTION
+                // =====================================================
+
+                closeSocketOnly();
+
+                // =====================================================
+                // CONNECT TO SELECTED SERVER
+                // =====================================================
+
+                try {
+
+                        System.out.println();
+                        System.out.println(
+                                        "Connecting to selected server...");
+
+                        Socket newSocket = new Socket(
+                                        targetHost,
+                                        targetPort);
+
+                        socket = newSocket;
+
+                        setupStreams();
+
+                        currentServerPort = targetPort;
+
+                        System.out.println();
+                        System.out.println(
+                                        "Connected to "
+                                                        + currentServerName()
+                                                        + ".");
+
+                        // =================================================
+                        // AUTOMATIC RE-AUTHENTICATION
+                        // =================================================
+
+                        System.out.println();
+                        System.out.println(
+                                        "Re-authenticating...");
+
+                        boolean loginSuccessful = automaticReAuthentication();
+
+                        if (loginSuccessful) {
+
+                                authenticated = true;
+
+                                System.out.println();
+                                System.out.println(
+                                                "=================================");
+
+                                System.out.println(
+                                                "    LOAD BALANCING SUCCESSFUL");
+
+                                System.out.println(
+                                                "=================================");
+
+                                System.out.println(
+                                                "Connected to "
+                                                                + currentServerName());
+
+                                System.out.println(
+                                                "Authentication successful!");
+
+                                System.out.println(
+                                                "Client automatically distributed "
+                                                                + "to selected server.");
+
+                                System.out.println(
+                                                "=================================");
+
+                                System.out.println();
+
+                                reconnecting = false;
+
+                                // =================================================
+                                // START RECEIVE THREAD
+                                // =================================================
+
+                                startReceiveThread();
+
+                                // =================================================
+                                // SHOW COMMAND MENU
+                                // =================================================
+
+                                printCommandMenu();
+
+                                return;
+                        }
+
+                        // =================================================
+                        // AUTHENTICATION FAILED
+                        // =================================================
+
+                        System.out.println();
+                        System.out.println(
+                                        "Automatic re-authentication failed.");
+
+                        closeSocketOnly();
+
+                } catch (IOException e) {
+
+                        System.out.println();
+                        System.out.println(
+                                        "Unable to connect to selected server.");
+
+                        System.out.println(
+                                        "Reason: "
+                                                        + e.getMessage());
+
+                        closeSocketOnly();
+                }
+
+                // =====================================================
+                // LOAD BALANCING FAILED
+                // =====================================================
+
+                authenticated = false;
+                reconnecting = false;
+
+                System.out.println();
+                System.out.println(
+                                "=================================");
+
+                System.out.println(
+                                "    LOAD BALANCING FAILED");
+
+                System.out.println(
+                                "=================================");
+
+                System.out.println(
+                                "Could not connect to "
+                                                + serverNameFromPort(
+                                                                targetPort)
+                                                + ".");
+
+                System.out.println(
+                                "Remaining connected to the previous server "
+                                                + "is not possible because its connection "
+                                                + "was closed.");
+
+                System.out.println(
+                                "=================================");
         }
 
         // =========================================================
@@ -2116,6 +2363,15 @@ public class ChatClient {
 
                 System.out.println(
                                 "/grouphistory group");
+
+                System.out.println(
+                                "/balanceconnect");
+
+                System.out.println(
+                                "/load");
+
+                System.out.println(
+                                "/balance");
 
                 System.out.println(
                                 "/exit");

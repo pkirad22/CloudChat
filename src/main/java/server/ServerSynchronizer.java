@@ -57,6 +57,20 @@ public class ServerSynchronizer {
         private final Object writeLock = new Object();
 
         // =========================================================
+        // DISTRIBUTED LOAD INFORMATION
+        // =========================================================
+
+        private static volatile double remoteLoadScore = -1;
+
+        private static volatile int remoteConnectedClients = 0;
+
+        private static volatile double remoteCpuUsage = -1;
+
+        private static volatile double remoteMemoryUsage = -1;
+
+        private static volatile int remoteActiveThreads = 0;
+
+        // =========================================================
         // CONSTRUCTOR
         // =========================================================
 
@@ -244,6 +258,7 @@ public class ServerSynchronizer {
                 // -----------------------------------------------------
 
                 startHeartbeat(syncSocket);
+                startLoadSynchronization(syncSocket);
         }
 
         // =========================================================
@@ -409,6 +424,13 @@ public class ServerSynchronizer {
                                                 "[SYNC] Remote user OFFLINE: "
                                                                 + username);
                         }
+
+                        return;
+                }
+
+                if (message.startsWith("LOAD_UPDATE:")) {
+
+                        processLoadUpdate(message);
 
                         return;
                 }
@@ -1623,6 +1645,117 @@ public class ServerSynchronizer {
                                                 + remoteOnlineUsers);
         }
 
+        // =========================================================
+        // PROCESS REMOTE LOAD UPDATE
+        // =========================================================
+
+        private void processLoadUpdate(String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 6);
+
+                        if (parts.length < 6) {
+
+                                System.out.println(
+                                                "[LOAD SYNC] Invalid LOAD_UPDATE message.");
+
+                                return;
+                        }
+
+                        remoteConnectedClients = Integer.parseInt(parts[1]);
+
+                        remoteCpuUsage = Double.parseDouble(parts[2]);
+
+                        remoteMemoryUsage = Double.parseDouble(parts[3]);
+
+                        remoteActiveThreads = Integer.parseInt(parts[4]);
+
+                        remoteLoadScore = Double.parseDouble(parts[5]);
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "[LOAD SYNC] Remote server load updated.");
+
+                        System.out.println(
+                                        "[LOAD SYNC] Clients : "
+                                                        + remoteConnectedClients);
+
+                        System.out.printf(
+                                        "[LOAD SYNC] CPU     : %.2f%%%n",
+                                        remoteCpuUsage);
+
+                        System.out.printf(
+                                        "[LOAD SYNC] Memory  : %.2f%%%n",
+                                        remoteMemoryUsage);
+
+                        System.out.println(
+                                        "[LOAD SYNC] Threads : "
+                                                        + remoteActiveThreads);
+
+                        System.out.printf(
+                                        "[LOAD SYNC] Score   : %.2f%n",
+                                        remoteLoadScore);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[LOAD SYNC] Error processing load update: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // SEND LOAD UPDATE
+        // =========================================================
+
+        private void sendLoadUpdate() {
+
+                try {
+
+                        ServerLoadMonitor monitor = new ServerLoadMonitor();
+
+                        int clients = monitor.getConnectedClients();
+
+                        double cpu = monitor.getCpuUsage();
+
+                        double memory = monitor.getMemoryUsage();
+
+                        int threads = monitor.getActiveThreads();
+
+                        double score = monitor.getLoadScore();
+
+                        String message = "LOAD_UPDATE:"
+                                        + clients + ":"
+                                        + cpu + ":"
+                                        + memory + ":"
+                                        + threads + ":"
+                                        + score;
+
+                        send(message);
+
+                        System.out.printf(
+                                        "[LOAD SYNC] Local load sent - "
+                                                        + "Clients: %d, "
+                                                        + "CPU: %.2f%%, "
+                                                        + "Memory: %.2f%%, "
+                                                        + "Threads: %d, "
+                                                        + "Score: %.2f%n",
+                                        clients,
+                                        cpu,
+                                        memory,
+                                        threads,
+                                        score);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[LOAD SYNC] Unable to send load update: "
+                                                        + e.getMessage());
+                }
+        }
+
         private void processFileRouteRequest(String message) {
 
                 try {
@@ -1845,6 +1978,42 @@ public class ServerSynchronizer {
                 heartbeatThread.setDaemon(true);
 
                 heartbeatThread.start();
+        }
+
+        // =========================================================
+        // LOAD SYNCHRONIZATION
+        // =========================================================
+
+        private void startLoadSynchronization(
+                        Socket connectionSocket) {
+
+                Thread loadThread = new Thread(
+                                () -> {
+
+                                        while (running
+                                                        && connected
+                                                        && syncSocket == connectionSocket) {
+
+                                                sleep(5000);
+
+                                                if (running
+                                                                && connected
+                                                                && syncSocket == connectionSocket) {
+
+                                                        sendLoadUpdate();
+                                                }
+                                        }
+                                },
+                                primaryServer
+                                                ? "Server1-Load-Synchronization"
+                                                : "Server2-Load-Synchronization");
+
+                loadThread.setDaemon(true);
+
+                loadThread.start();
+
+                System.out.println(
+                                "[LOAD SYNC] Load synchronization thread started.");
         }
 
         // =========================================================
@@ -2315,5 +2484,38 @@ public class ServerSynchronizer {
 
                         Thread.currentThread().interrupt();
                 }
+        }
+
+        // =========================================================
+        // REMOTE LOAD GETTERS
+        // =========================================================
+
+        public double getRemoteLoadScore() {
+
+                return remoteLoadScore;
+        }
+
+        public int getRemoteConnectedClients() {
+
+                return remoteConnectedClients;
+        }
+
+        public double getRemoteCpuUsage() {
+
+                return remoteCpuUsage;
+        }
+
+        public double getRemoteMemoryUsage() {
+
+                return remoteMemoryUsage;
+        }
+
+        public int getRemoteActiveThreads() {
+
+                return remoteActiveThreads;
+        }
+
+        public boolean isPrimaryServer() {
+                return primaryServer;
         }
 }
