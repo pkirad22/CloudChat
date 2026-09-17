@@ -679,6 +679,18 @@ public class ChatClient {
 
                                                         receiveFile();
                                                 }
+                                                if (serverMessage.startsWith(
+                                                                "FILE_DELIVERY_READY:")) {
+
+                                                        receiveDistributedFile(
+                                                                        serverMessage);
+                                                }
+                                                if (serverMessage.startsWith(
+                                                                "GROUP_FILE_DELIVERY_READY:")) {
+
+                                                        receiveGroupFile(
+                                                                        serverMessage);
+                                                }
 
                                                 System.out.print("You: ");
                                         }
@@ -1611,6 +1623,447 @@ public class ChatClient {
                                                         + e.getMessage());
                 }
         }
+        // =========================================================
+        // RECEIVE DISTRIBUTED FILE
+        // =========================================================
+
+        private static void receiveDistributedFile(
+                        String message) {
+
+                try {
+
+                        /*
+                         * Format:
+                         *
+                         * FILE_DELIVERY_READY:
+                         * sender:
+                         * recipient:
+                         * fileName:
+                         * fileSize:
+                         * deliveryPort
+                         */
+
+                        String[] parts = message.split(":", 6);
+
+                        if (parts.length < 6) {
+
+                                System.out.println(
+                                                "[FILE-DIST] Invalid delivery message.");
+
+                                return;
+                        }
+
+                        String sender = parts[1];
+
+                        String recipient = parts[2];
+
+                        String fileName = parts[3];
+
+                        long fileSize = Long.parseLong(parts[4]);
+
+                        int deliveryPort = Integer.parseInt(parts[5]);
+
+                        System.out.println();
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        "[FILE-DIST] Incoming distributed file");
+
+                        System.out.println(
+                                        "Sender: "
+                                                        + sender);
+
+                        System.out.println(
+                                        "File: "
+                                                        + fileName);
+
+                        System.out.println(
+                                        "Size: "
+                                                        + fileSize
+                                                        + " bytes");
+
+                        System.out.println(
+                                        "Connecting to Server "
+                                                        + "file-delivery port: "
+                                                        + deliveryPort);
+
+                        System.out.println(
+                                        "=================================");
+
+                        // =====================================================
+                        // DOWNLOAD DIRECTORY
+                        // =====================================================
+
+                        File downloadDirectory = new File("downloads");
+
+                        if (!downloadDirectory.exists()) {
+
+                                downloadDirectory.mkdirs();
+                        }
+
+                        // =====================================================
+                        // CONNECT TO SERVER 2
+                        // =====================================================
+
+                        try (
+                                        Socket fileSocket = new Socket(
+                                                        SERVER_ADDRESS,
+                                                        deliveryPort);
+
+                                        DataInputStream input = new DataInputStream(
+                                                        fileSocket.getInputStream())) {
+
+                                System.out.println(
+                                                "[FILE-DIST] Connected to "
+                                                                + "Server 2 delivery server.");
+
+                                // =================================================
+                                // RECEIVE ACTUAL FILE METADATA
+                                // =================================================
+
+                                String receivedFileName = input.readUTF();
+
+                                long receivedFileSize = input.readLong();
+
+                                System.out.println(
+                                                "[FILE-DIST] Receiving: "
+                                                                + receivedFileName);
+
+                                System.out.println(
+                                                "[FILE-DIST] Expected size: "
+                                                                + receivedFileSize
+                                                                + " bytes");
+
+                                File outputFile = new File(
+                                                downloadDirectory,
+                                                receivedFileName);
+
+                                // =================================================
+                                // RECEIVE FILE
+                                // =================================================
+
+                                long totalReceived = 0;
+
+                                try (
+                                                FileOutputStream output = new FileOutputStream(
+                                                                outputFile)) {
+
+                                        byte[] buffer = new byte[8192];
+
+                                        while (totalReceived < receivedFileSize) {
+
+                                                int bytesRead = input.read(
+                                                                buffer,
+                                                                0,
+                                                                (int) Math.min(
+                                                                                buffer.length,
+                                                                                receivedFileSize
+                                                                                                - totalReceived));
+
+                                                if (bytesRead == -1) {
+
+                                                        break;
+                                                }
+
+                                                output.write(
+                                                                buffer,
+                                                                0,
+                                                                bytesRead);
+
+                                                totalReceived += bytesRead;
+                                        }
+                                }
+
+                                // =================================================
+                                // RESULT
+                                // =================================================
+
+                                if (totalReceived == receivedFileSize) {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "[FILE-DIST] File received "
+                                                                        + "successfully!");
+
+                                        System.out.println(
+                                                        "[FILE-DIST] Sender: "
+                                                                        + sender);
+
+                                        System.out.println(
+                                                        "[FILE-DIST] Saved at: "
+                                                                        + outputFile
+                                                                                        .getAbsolutePath());
+
+                                        System.out.println(
+                                                        "[FILE-DIST] Total bytes received: "
+                                                                        + totalReceived);
+
+                                } else {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "[FILE-DIST] File transfer incomplete.");
+
+                                        System.out.println(
+                                                        "Expected: "
+                                                                        + receivedFileSize
+                                                                        + " bytes");
+
+                                        System.out.println(
+                                                        "Received: "
+                                                                        + totalReceived
+                                                                        + " bytes");
+                                }
+
+                        }
+
+                        System.out.println(
+                                        "=================================");
+
+                } catch (IOException e) {
+
+                        System.out.println();
+                        System.out.println(
+                                        "[FILE-DIST] Unable to receive "
+                                                        + "distributed file.");
+
+                        System.out.println(
+                                        "[FILE-DIST] Error: "
+                                                        + e.getMessage());
+                }
+
+        }
+
+        // =========================================================
+        // RECEIVE GROUP FILE
+        // =========================================================
+
+        private static void receiveGroupFile(
+                        String message) {
+
+                try {
+
+                        /*
+                         * Format:
+                         *
+                         * GROUP_FILE_DELIVERY_READY:
+                         * groupName:
+                         * sender:
+                         * fileName:
+                         * fileSize:
+                         * deliveryPort
+                         */
+
+                        String[] parts = message.split(":", 6);
+
+                        if (parts.length < 6) {
+
+                                System.out.println(
+                                                "[GROUP-FILE] Invalid delivery message.");
+
+                                return;
+                        }
+
+                        String groupName = parts[1];
+
+                        String sender = parts[2];
+
+                        String fileName = parts[3];
+
+                        long fileSize = Long.parseLong(
+                                        parts[4]);
+
+                        int deliveryPort = Integer.parseInt(
+                                        parts[5]);
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        "[GROUP-FILE] Incoming group file");
+
+                        System.out.println(
+                                        "Group: "
+                                                        + groupName);
+
+                        System.out.println(
+                                        "Sender: "
+                                                        + sender);
+
+                        System.out.println(
+                                        "File: "
+                                                        + fileName);
+
+                        System.out.println(
+                                        "Size: "
+                                                        + fileSize
+                                                        + " bytes");
+
+                        System.out.println(
+                                        "Delivery port: "
+                                                        + deliveryPort);
+
+                        System.out.println(
+                                        "=================================");
+
+                        // =====================================================
+                        // DOWNLOAD DIRECTORY
+                        // =====================================================
+
+                        File downloadDirectory = new File("downloads");
+
+                        if (!downloadDirectory.exists()) {
+
+                                downloadDirectory.mkdirs();
+                        }
+
+                        // =====================================================
+                        // CONNECT TO SERVER
+                        // =====================================================
+
+                        try (
+                                        Socket fileSocket = new Socket(
+                                                        SERVER_ADDRESS,
+                                                        deliveryPort);
+
+                                        DataInputStream input = new DataInputStream(
+                                                        fileSocket.getInputStream())) {
+
+                                System.out.println(
+                                                "[GROUP-FILE] Connected to "
+                                                                + "group file delivery server.");
+
+                                // =================================================
+                                // RECEIVE ACTUAL FILE METADATA
+                                // =================================================
+
+                                String receivedFileName = input.readUTF();
+
+                                long receivedFileSize = input.readLong();
+
+                                System.out.println(
+                                                "[GROUP-FILE] Receiving: "
+                                                                + receivedFileName);
+
+                                System.out.println(
+                                                "[GROUP-FILE] Expected size: "
+                                                                + receivedFileSize
+                                                                + " bytes");
+
+                                // =================================================
+                                // CREATE OUTPUT FILE
+                                // =================================================
+
+                                File outputFile = new File(
+                                                downloadDirectory,
+                                                receivedFileName);
+
+                                // =================================================
+                                // RECEIVE FILE
+                                // =================================================
+
+                                long totalReceived = 0;
+
+                                try (
+                                                FileOutputStream output = new FileOutputStream(
+                                                                outputFile)) {
+
+                                        byte[] buffer = new byte[8192];
+
+                                        while (totalReceived < receivedFileSize) {
+
+                                                int bytesToRead = (int) Math.min(
+                                                                buffer.length,
+                                                                receivedFileSize
+                                                                                - totalReceived);
+
+                                                int bytesRead = input.read(
+                                                                buffer,
+                                                                0,
+                                                                bytesToRead);
+
+                                                if (bytesRead == -1) {
+
+                                                        break;
+                                                }
+
+                                                output.write(
+                                                                buffer,
+                                                                0,
+                                                                bytesRead);
+
+                                                totalReceived += bytesRead;
+                                        }
+
+                                        output.flush();
+                                }
+
+                                // =================================================
+                                // RESULT
+                                // =================================================
+
+                                System.out.println();
+
+                                if (totalReceived == receivedFileSize) {
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] "
+                                                                        + "File received successfully!");
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] Group: "
+                                                                        + groupName);
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] Sender: "
+                                                                        + sender);
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] Saved at: "
+                                                                        + outputFile
+                                                                                        .getAbsolutePath());
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] Total bytes received: "
+                                                                        + totalReceived);
+
+                                } else {
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] "
+                                                                        + "File transfer incomplete.");
+
+                                        System.out.println(
+                                                        "Expected: "
+                                                                        + receivedFileSize
+                                                                        + " bytes");
+
+                                        System.out.println(
+                                                        "Received: "
+                                                                        + totalReceived
+                                                                        + " bytes");
+                                }
+                        }
+
+                        System.out.println(
+                                        "=================================");
+
+                } catch (IOException e) {
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "[GROUP-FILE] Unable to receive "
+                                                        + "group file.");
+
+                        System.out.println(
+                                        "[GROUP-FILE] Error: "
+                                                        + e.getMessage());
+                }
+        }
 
         // =========================================================
         // COMMAND MENU
@@ -1654,6 +2107,9 @@ public class ChatClient {
 
                 System.out.println(
                                 "/sendfile username filepath");
+
+                System.out.println(
+                                "/groupfile groupname filepath");
 
                 System.out.println(
                                 "/history username");

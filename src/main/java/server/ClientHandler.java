@@ -401,6 +401,11 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
+                                if (message.startsWith("/groupfile ")) {
+                                        handleGroupFile(message);
+                                        continue;
+                                }
+
                                 // =================================================
                                 // PRIVATE MESSAGE
                                 // =================================================
@@ -660,6 +665,7 @@ public class ClientHandler implements Runnable {
 
                         Thread fileTransferThread = new Thread(
                                         new FileTransferServer(
+                                                        username,
                                                         recipient,
                                                         file));
 
@@ -683,11 +689,52 @@ public class ClientHandler implements Runnable {
                                                         + " -> "
                                                         + recipient);
 
+                        // ---------------------------------------------------------
+                        // Start distributed file transfer server
+                        // ---------------------------------------------------------
+
+                        DistributedFileTransferServer transferServer = new DistributedFileTransferServer(
+                                        file,
+                                        username,
+                                        recipient);
+
+                        Thread transferThread = new Thread(
+                                        transferServer,
+                                        "DistributedFileTransferServer-"
+                                                        + file.getName());
+
+                        transferThread.start();
+
+                        // ---------------------------------------------------------
+                        // Wait until transfer port is ready
+                        // ---------------------------------------------------------
+
+                        boolean portReady = transferServer.awaitPort(5000);
+
+                        if (!portReady) {
+
+                                sendMessage(
+                                                "SYSTEM: Unable to start distributed file transfer.");
+
+                                return;
+                        }
+
+                        int transferPort = transferServer.getTransferPort();
+
+                        System.out.println(
+                                        "[FILE-DIST] Transfer port ready: "
+                                                        + transferPort);
+
+                        // ---------------------------------------------------------
+                        // Send routing request to remote server
+                        // ---------------------------------------------------------
+
                         boolean routed = ChatServer.sendFileRouteRequest(
                                         username,
                                         recipient,
                                         file.getName(),
-                                        file.length());
+                                        file.length(),
+                                        transferPort);
 
                         if (routed) {
 
@@ -711,6 +758,122 @@ public class ClientHandler implements Runnable {
                                 "SYSTEM: User '"
                                                 + recipient
                                                 + "' is not online.");
+        }
+
+        private void handleGroupFile(String message) {
+
+                String[] parts = message.split(" ", 3);
+
+                if (parts.length < 3) {
+
+                        sendMessage("SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /groupfile groupname filepath");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                String filePath = parts[2].trim();
+
+                File file = new File(filePath);
+
+                // =========================================================
+                // FILE VALIDATION
+                // =========================================================
+
+                if (!file.exists()) {
+
+                        sendMessage(
+                                        "SYSTEM: File does not exist.");
+
+                        return;
+                }
+
+                if (!file.isFile()) {
+
+                        sendMessage(
+                                        "SYSTEM: Selected path is not a file.");
+
+                        return;
+                }
+
+                if (!isSupportedFile(file)) {
+
+                        sendMessage(
+                                        "SYSTEM: Unsupported file type.");
+
+                        sendMessage(
+                                        "SYSTEM: Supported files: "
+                                                        + "Images, PDF and Audio.");
+
+                        return;
+                }
+
+                // =========================================================
+                // GROUP VALIDATION
+                // =========================================================
+
+                if (!ChatServer.groupExists(groupName)) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' does not exist.");
+
+                        return;
+                }
+
+                if (!ChatServer.isAnyGroupMember(
+                                groupName,
+                                this)) {
+
+                        sendMessage(
+                                        "SYSTEM: You are not a member of group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                // =========================================================
+                // START GROUP FILE TRANSFER
+                // =========================================================
+
+                System.out.println();
+
+                System.out.println(
+                                "[GROUP-FILE] "
+                                                + username
+                                                + " sending file to group "
+                                                + groupName);
+
+                System.out.println(
+                                "[GROUP-FILE] File: "
+                                                + file.getName());
+
+                System.out.println(
+                                "[GROUP-FILE] Size: "
+                                                + file.length()
+                                                + " bytes");
+
+                boolean started = ChatServer.sendGroupFile(
+                                username,
+                                groupName,
+                                file);
+
+                if (started) {
+
+                        sendMessage(
+                                        "SYSTEM: Group file transfer started.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to start group file transfer.");
+                }
         }
 
         // =========================================================

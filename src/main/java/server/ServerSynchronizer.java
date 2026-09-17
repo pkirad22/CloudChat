@@ -541,6 +541,24 @@ public class ServerSynchronizer {
                 }
 
                 // =====================================================
+                // GROUP FILE ROUTING
+                // =====================================================
+
+                if (message.startsWith("FILE_GROUP_ROUTE_REQUEST:")) {
+
+                        processGroupFileRouteRequest(message);
+
+                        return;
+                }
+
+                if (message.startsWith("FILE_GROUP_ROUTE_ACK:")) {
+
+                        processGroupFileRouteAck(message);
+
+                        return;
+                }
+
+                // =====================================================
                 // STATUS
                 // =====================================================
 
@@ -971,6 +989,252 @@ public class ServerSynchronizer {
         }
 
         // =========================================================
+        // PROCESS GROUP FILE ROUTE REQUEST
+        // =========================================================
+
+        private void processGroupFileRouteRequest(
+                        String message) {
+
+                try {
+
+                        /*
+                         * Format:
+                         *
+                         * FILE_GROUP_ROUTE_REQUEST:
+                         * sender:
+                         * groupName:
+                         * fileName:
+                         * fileSize:
+                         * transferPort
+                         *
+                         * split limit = 6
+                         */
+
+                        String[] parts = message.split(":", 7);
+
+                        if (parts.length < 7) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid FILE_GROUP_ROUTE_REQUEST.");
+
+                                return;
+                        }
+
+                        String sender = parts[1];
+
+                        String groupName = parts[2];
+
+                        String fileName = parts[3];
+
+                        long fileSize = Long.parseLong(parts[4]);
+
+                        int transferPort = Integer.parseInt(parts[5]);
+
+                        String recipientString = parts[6];
+
+                        java.util.List<String> allRecipients = new java.util.ArrayList<>();
+
+                        if (!recipientString.trim().isEmpty()) {
+
+                                for (String recipient : recipientString.split(",")) {
+
+                                        if (recipient != null
+                                                        && !recipient.trim().isEmpty()) {
+
+                                                allRecipients.add(
+                                                                recipient.trim());
+                                        }
+                                }
+                        }
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] GROUP FILE ROUTE REQUEST received.");
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] Sender: "
+                                                        + sender);
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] Group: "
+                                                        + groupName);
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] File: "
+                                                        + fileName);
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] Size: "
+                                                        + fileSize
+                                                        + " bytes");
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] Source transfer port: "
+                                                        + transferPort);
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] All recipients: "
+                                                        + allRecipients);
+
+                        // =====================================================
+                        // VERIFY LOCAL GROUP MEMBERS
+                        // =====================================================
+
+                        Set<String> remoteGroupMembers = ChatServer.getRemoteGroupMembers(
+                                        groupName);
+
+                        /*
+                         * On this server, remoteGroupMembers contains users
+                         * belonging to the group on the OTHER server.
+                         *
+                         * We need to find users who are actually connected
+                         * LOCALLY and joined this group.
+                         */
+
+                        java.util.List<String> localRecipients = new java.util.ArrayList<>();
+
+                        for (String username : ChatServer.getLocalOnlineUsers()) {
+
+                                if (username == null
+                                                || username.trim().isEmpty()) {
+
+                                        continue;
+                                }
+
+                                ClientHandler client = ChatServer.getOnlineUser(username);
+
+                                if (client == null) {
+                                        continue;
+                                }
+
+                                if (ChatServer.isAnyGroupMember(
+                                                groupName,
+                                                client)) {
+
+                                        localRecipients.add(username);
+
+                                        System.out.println(
+                                                        "[GROUP-FILE-DIST] "
+                                                                        + "Local recipient found: "
+                                                                        + username);
+                                }
+                        }
+
+                        boolean hasLocalRecipients = !localRecipients.isEmpty();
+
+                        if (!hasLocalRecipients) {
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] No local recipients "
+                                                                + "for group "
+                                                                + groupName);
+
+                                send(
+                                                "FILE_GROUP_ROUTE_ACK:"
+                                                                + sender
+                                                                + ":"
+                                                                + groupName
+                                                                + ":FAILED");
+
+                                return;
+                        }
+
+                        String sourceServer = primaryServer
+                                        ? "SERVER_1"
+                                        : "SERVER_2";
+
+                        String destinationServer = primaryServer
+                                        ? "SERVER_2"
+                                        : "SERVER_1";
+
+                        // =====================================================
+                        // START SERVER-TO-SERVER FILE RECEIVER
+                        // =====================================================
+
+                        Thread receiverThread = new Thread(
+                                        new DistributedGroupFileTransferReceiver(
+                                                        SERVER_ADDRESS,
+                                                        transferPort,
+                                                        sender,
+                                                        groupName,
+                                                        fileName,
+                                                        fileSize,
+                                                        allRecipients,
+                                                        sourceServer,
+                                                        destinationServer),
+                                        "DistributedGroupFileReceiver-"
+                                                        + fileName);
+
+                        receiverThread.start();
+
+                        // =====================================================
+                        // ACKNOWLEDGE
+                        // =====================================================
+
+                        send(
+                                        "FILE_GROUP_ROUTE_ACK:"
+                                                        + sender
+                                                        + ":"
+                                                        + groupName
+                                                        + ":READY");
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] Receiver started for group: "
+                                                        + groupName);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[GROUP-FILE-DIST] Error processing "
+                                                        + "group file route request: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // PROCESS GROUP FILE ROUTE ACK
+        // =========================================================
+
+        private void processGroupFileRouteAck(
+                        String message) {
+
+                try {
+
+                        String[] parts = message.split(":", 4);
+
+                        if (parts.length < 4) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid FILE_GROUP_ROUTE_ACK.");
+
+                                return;
+                        }
+
+                        String sender = parts[1];
+
+                        String groupName = parts[2];
+
+                        String status = parts[3];
+
+                        System.out.println(
+                                        "[SYNC] FILE_GROUP_ROUTE_ACK received: "
+                                                        + sender
+                                                        + " -> Group: "
+                                                        + groupName
+                                                        + " | Status: "
+                                                        + status);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Error processing "
+                                                        + "FILE_GROUP_ROUTE_ACK: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
         // GROUP LEAVE PROCESSING
         // =========================================================
 
@@ -1144,26 +1408,70 @@ public class ServerSynchronizer {
 
                 try {
 
-                        String[] parts = message.split(":", 5);
+                        /*
+                         * Format:
+                         *
+                         * FILE_ROUTE_REQUEST:
+                         * sender:
+                         * recipient:
+                         * fileName:
+                         * fileSize:
+                         * transferPort
+                         *
+                         * split limit = 6
+                         */
 
-                        if (parts.length < 5) {
-                                System.out.println("[SYNC] Invalid FILE_ROUTE_REQUEST.");
+                        String[] parts = message.split(":", 6);
+
+                        if (parts.length < 6) {
+
+                                System.out.println(
+                                                "[SYNC] Invalid FILE_ROUTE_REQUEST.");
+
                                 return;
                         }
 
                         String sender = parts[1];
+
                         String recipient = parts[2];
+
                         String fileName = parts[3];
+
                         long fileSize = Long.parseLong(parts[4]);
+
+                        int transferPort = Integer.parseInt(parts[5]);
+
+                        // =====================================================
+                        // DETERMINE SERVER DIRECTION
+                        // =====================================================
+
+                        String sourceServer = primaryServer
+                                        ? "SERVER_2"
+                                        : "SERVER_1";
+
+                        String destinationServer = primaryServer
+                                        ? "SERVER_1"
+                                        : "SERVER_2";
 
                         System.out.println(
                                         "[SYNC] FILE_ROUTE_REQUEST received: "
-                                                        + sender + " -> "
+                                                        + sender
+                                                        + " -> "
                                                         + recipient
-                                                        + " | File: " + fileName
-                                                        + " | Size: " + fileSize + " bytes");
+                                                        + " | File: "
+                                                        + fileName
+                                                        + " | Size: "
+                                                        + fileSize
+                                                        + " bytes"
+                                                        + " | Port: "
+                                                        + transferPort);
 
-                        ClientHandler recipientHandler = ChatServer.getOnlineUser(recipient);
+                        // ---------------------------------------------------------
+                        // Verify recipient is local
+                        // ---------------------------------------------------------
+
+                        ClientHandler recipientHandler = ChatServer.getOnlineUser(
+                                        recipient);
 
                         if (recipientHandler == null) {
 
@@ -1173,7 +1481,8 @@ public class ServerSynchronizer {
 
                                 send(
                                                 "FILE_ROUTE_ACK:"
-                                                                + sender + ":"
+                                                                + sender
+                                                                + ":"
                                                                 + recipient
                                                                 + ":FAILED");
 
@@ -1184,16 +1493,43 @@ public class ServerSynchronizer {
                                         "[SYNC] File recipient is online: "
                                                         + recipient);
 
+                        // ---------------------------------------------------------
+                        // Start binary receiver
+                        // ---------------------------------------------------------
+
+                        Thread receiverThread = new Thread(
+                                        new DistributedFileTransferReceiver(
+                                                        SERVER_ADDRESS,
+                                                        transferPort,
+                                                        sender,
+                                                        recipient,
+                                                        sourceServer,
+                                                        destinationServer),
+                                        "DistributedFileReceiver-"
+                                                        + fileName);
+
+                        receiverThread.start();
+
+                        // ---------------------------------------------------------
+                        // Tell source server that receiver started
+                        // ---------------------------------------------------------
+
                         send(
                                         "FILE_ROUTE_ACK:"
-                                                        + sender + ":"
+                                                        + sender
+                                                        + ":"
                                                         + recipient
                                                         + ":READY");
+
+                        System.out.println(
+                                        "[FILE-DIST] Receiver started for: "
+                                                        + fileName);
 
                 } catch (Exception e) {
 
                         System.out.println(
-                                        "[SYNC] Error processing FILE_ROUTE_REQUEST: "
+                                        "[SYNC] Error processing "
+                                                        + "FILE_ROUTE_REQUEST: "
                                                         + e.getMessage());
                 }
         }
@@ -1318,34 +1654,133 @@ public class ServerSynchronizer {
                         String sender,
                         String recipient,
                         String fileName,
-                        long fileSize) {
+                        long fileSize,
+                        int transferPort) {
 
                 try {
+
                         if (!connected) {
-                                System.out.println("[SYNC] Cannot send file route request. Server not connected.");
+
+                                System.out.println(
+                                                "[SYNC] Cannot send file route request. "
+                                                                + "Server not connected.");
+
                                 return false;
                         }
 
                         String message = "FILE_ROUTE_REQUEST:"
-                                        + sender + ":"
-                                        + recipient + ":"
-                                        + fileName + ":"
-                                        + fileSize;
+                                        + sender
+                                        + ":"
+                                        + recipient
+                                        + ":"
+                                        + fileName
+                                        + ":"
+                                        + fileSize
+                                        + ":"
+                                        + transferPort;
 
                         send(message);
 
                         System.out.println(
                                         "[SYNC] FILE_ROUTE_REQUEST sent: "
-                                                        + sender + " -> "
+                                                        + sender
+                                                        + " -> "
                                                         + recipient
-                                                        + " | File: " + fileName
-                                                        + " | Size: " + fileSize + " bytes");
+                                                        + " | File: "
+                                                        + fileName
+                                                        + " | Size: "
+                                                        + fileSize
+                                                        + " bytes"
+                                                        + " | Port: "
+                                                        + transferPort);
 
                         return true;
 
                 } catch (Exception e) {
+
                         System.out.println(
                                         "[SYNC] Failed to send file route request: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        // =========================================================
+        // SEND GROUP FILE ROUTE REQUEST
+        // =========================================================
+
+        public boolean sendGroupFileRouteRequest(
+                        String sender,
+                        String groupName,
+                        String fileName,
+                        long fileSize,
+                        int transferPort,
+                        java.util.Set<String> recipients) {
+
+                try {
+
+                        if (!connected) {
+
+                                System.out.println(
+                                                "[SYNC] Cannot send group file route request. "
+                                                                + "Server not connected.");
+
+                                return false;
+                        }
+
+                        /*
+                         * Format:
+                         *
+                         * FILE_GROUP_ROUTE_REQUEST:
+                         * sender:
+                         * groupName:
+                         * fileName:
+                         * fileSize:
+                         * transferPort:
+                         * recipients
+                         */
+
+                        String recipientList = String.join(
+                                        ",",
+                                        recipients);
+
+                        String message = "FILE_GROUP_ROUTE_REQUEST:"
+                                        + sender
+                                        + ":"
+                                        + groupName
+                                        + ":"
+                                        + fileName
+                                        + ":"
+                                        + fileSize
+                                        + ":"
+                                        + transferPort
+                                        + ":"
+                                        + recipientList;
+
+                        send(message);
+
+                        System.out.println(
+                                        "[SYNC] FILE_GROUP_ROUTE_REQUEST sent: "
+                                                        + sender
+                                                        + " -> Group: "
+                                                        + groupName
+                                                        + " | File: "
+                                                        + fileName
+                                                        + " | Size: "
+                                                        + fileSize
+                                                        + " bytes"
+                                                        + " | Port: "
+                                                        + transferPort
+                                                        + " | Recipients: "
+                                                        + recipientList);
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[SYNC] Failed to send group file route request: "
                                                         + e.getMessage());
 
                         return false;

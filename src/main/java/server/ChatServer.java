@@ -1,14 +1,20 @@
 package server;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import database.MongoDBConnection;
+import model.FileTransferHistory;
+import service.FileTransferHistoryService;
 import service.GroupService;
 
 public class ChatServer {
@@ -809,7 +815,8 @@ public class ChatServer {
                         String sender,
                         String recipient,
                         String fileName,
-                        long fileSize) {
+                        long fileSize,
+                        int transferPort) {
 
                 if (serverSynchronizer == null) {
 
@@ -823,7 +830,262 @@ public class ChatServer {
                                 sender,
                                 recipient,
                                 fileName,
-                                fileSize);
+                                fileSize,
+                                transferPort);
+        }
+
+        public static void deliverGroupFileToLocalMembers(
+                        String groupName,
+                        String sender,
+                        File file,
+                        GroupFileTransferTracker tracker) {
+
+                if (groupName == null
+                                || groupName.trim().isEmpty()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Invalid group name.");
+
+                        return;
+                }
+
+                if (sender == null
+                                || sender.trim().isEmpty()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Invalid sender.");
+
+                        return;
+                }
+
+                if (file == null
+                                || !file.exists()
+                                || !file.isFile()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Invalid file.");
+
+                        return;
+                }
+
+                // =========================================================
+                // GET LOCAL GROUP MEMBERS
+                // =========================================================
+
+                Set<ClientHandler> groupMembers = groups.get(groupName);
+
+                if (groupMembers == null
+                                || groupMembers.isEmpty()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] No local members found for group: "
+                                                        + groupName);
+
+                        return;
+                }
+
+                // =========================================================
+                // COLLECT LOCAL RECIPIENTS
+                // =========================================================
+
+                List<String> recipients = new ArrayList<>();
+
+                for (ClientHandler member : groupMembers) {
+
+                        if (member == null) {
+                                continue;
+                        }
+
+                        String recipient = member.getUsername();
+
+                        if (recipient == null
+                                        || recipient.trim().isEmpty()) {
+                                continue;
+                        }
+
+                        // -----------------------------------------------------
+                        // Do not send the file back to the sender
+                        // -----------------------------------------------------
+
+                        if (recipient.equals(sender)) {
+                                continue;
+                        }
+
+                        recipients.add(recipient);
+                }
+
+                // =========================================================
+                // NO RECIPIENTS
+                // =========================================================
+
+                if (recipients.isEmpty()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] No other local members "
+                                                        + "available for delivery.");
+
+                        return;
+                }
+
+                System.out.println();
+                System.out.println(
+                                "[GROUP-FILE] Starting group file delivery.");
+
+                System.out.println(
+                                "[GROUP-FILE] Group: " + groupName);
+
+                System.out.println(
+                                "[GROUP-FILE] Sender: " + sender);
+
+                System.out.println(
+                                "[GROUP-FILE] File: " + file.getName());
+
+                System.out.println(
+                                "[GROUP-FILE] Recipients: " + recipients);
+
+                // =========================================================
+                // START DELIVERY TO EACH LOCAL MEMBER
+                // =========================================================
+
+                int deliveryCount = 0;
+
+                for (ClientHandler member : groupMembers) {
+
+                        if (member == null) {
+                                continue;
+                        }
+
+                        String recipient = member.getUsername();
+
+                        if (recipient == null
+                                        || recipient.trim().isEmpty()) {
+                                continue;
+                        }
+
+                        if (recipient.equals(sender)) {
+                                continue;
+                        }
+
+                        GroupFileDeliveryServer deliveryServer = new GroupFileDeliveryServer(
+                                        file,
+                                        sender,
+                                        groupName,
+                                        member,
+                                        tracker);
+
+                        Thread deliveryThread = new Thread(
+                                        deliveryServer,
+                                        "GroupFileDelivery-"
+                                                        + groupName
+                                                        + "-"
+                                                        + recipient
+                                                        + "-"
+                                                        + file.getName());
+
+                        deliveryThread.start();
+
+                        deliveryCount++;
+
+                        System.out.println(
+                                        "[GROUP-FILE] Delivery started: "
+                                                        + sender
+                                                        + " -> "
+                                                        + recipient);
+                }
+
+                // =========================================================
+                // SAVE GROUP FILE HISTORY
+                // =========================================================
+                //
+                // tracker == null
+                // -> This is a normal LOCAL_GROUP transfer.
+                // Save history here.
+                //
+                // tracker != null
+                // -> This is a DISTRIBUTED_GROUP transfer.
+                // The tracker will save history only after
+                // all expected recipients finish receiving.
+                //
+                // =========================================================
+
+                if (tracker == null) {
+
+                        try {
+
+                                FileTransferHistory history = new FileTransferHistory(
+
+                                                sender,
+
+                                                null,
+
+                                                groupName,
+
+                                                recipients,
+
+                                                file.getName(),
+
+                                                file.length(),
+
+                                                getFileType(
+                                                                file.getName()),
+
+                                                "LOCAL_GROUP",
+
+                                                "LOCAL",
+
+                                                "LOCAL",
+
+                                                "SUCCESS",
+
+                                                LocalDateTime.now());
+
+                                FileTransferHistoryService historyService = new FileTransferHistoryService();
+
+                                historyService.saveFileTransfer(history);
+
+                                System.out.println(
+                                                "[FILE-HISTORY] "
+                                                                + "Local group file transfer "
+                                                                + "saved to MongoDB.");
+
+                                System.out.println(
+                                                "[FILE-HISTORY] Group: "
+                                                                + groupName);
+
+                                System.out.println(
+                                                "[FILE-HISTORY] Recipients: "
+                                                                + recipients);
+
+                        } catch (Exception e) {
+
+                                System.out.println(
+                                                "[FILE-HISTORY] "
+                                                                + "Failed to save local group "
+                                                                + "file history: "
+                                                                + e.getMessage());
+                        }
+
+                } else {
+
+                        System.out.println(
+                                        "[GROUP-FILE-HISTORY] "
+                                                        + "Distributed group transfer detected.");
+
+                        System.out.println(
+                                        "[GROUP-FILE-HISTORY] "
+                                                        + "History will be saved by the "
+                                                        + "distributed transfer tracker.");
+
+                }
+
+                // =========================================================
+                // RESULT
+                // =========================================================
+
+                System.out.println(
+                                "[GROUP-FILE] File delivery started for "
+                                                + deliveryCount
+                                                + " local member(s).");
         }
 
         // =========================================================
@@ -1099,6 +1361,376 @@ public class ChatServer {
                 }
 
                 return false;
+        }
+
+        // =========================================================
+        // GROUP FILE SHARING
+        // =========================================================
+
+        public static boolean sendGroupFile(
+                        String sender,
+                        String groupName,
+                        java.io.File file) {
+
+                if (sender == null
+                                || groupName == null
+                                || file == null) {
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+
+                if (groupName.isEmpty()
+                                || !file.exists()
+                                || !file.isFile()) {
+
+                        return false;
+                }
+
+                System.out.println();
+                System.out.println(
+                                "[GROUP-FILE] Starting group file transfer.");
+
+                System.out.println(
+                                "[GROUP-FILE] Sender: "
+                                                + sender);
+
+                System.out.println(
+                                "[GROUP-FILE] Group: "
+                                                + groupName);
+
+                System.out.println(
+                                "[GROUP-FILE] File: "
+                                                + file.getName());
+
+                System.out.println(
+                                "[GROUP-FILE] Size: "
+                                                + file.length()
+                                                + " bytes");
+
+                // =====================================================
+                // COLLECT LOCAL GROUP RECIPIENTS
+                // =====================================================
+
+                List<String> localRecipients = new java.util.ArrayList<>();
+
+                // =====================================================
+                // LOCAL GROUP MEMBERS
+                // =====================================================
+
+                Set<ClientHandler> localMembers = groups.get(groupName);
+
+                if (localMembers != null) {
+
+                        for (ClientHandler member : localMembers) {
+
+                                if (member == null
+                                                || member.getUsername() == null) {
+                                        continue;
+                                }
+
+                                String recipient = member.getUsername();
+
+                                if (recipient.equals(sender)) {
+                                        continue;
+                                }
+
+                                ClientHandler actualLocalUser = onlineUsers.get(recipient);
+
+                                if (actualLocalUser == null) {
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] "
+                                                                        + recipient
+                                                                        + " is not local. "
+                                                                        + "Skipping local delivery.");
+
+                                        continue;
+                                }
+
+                                System.out.println(
+                                                "[GROUP-FILE] Local recipient: "
+                                                                + recipient);
+
+                                localRecipients.add(recipient);
+                        }
+                }
+
+                // =====================================================
+                // REMOTE GROUP MEMBERS
+                // =====================================================
+
+                Set<String> remoteMembers = ConcurrentHashMap.newKeySet();
+
+                // -----------------------------------------------------
+                // First use synchronized remote membership
+                // -----------------------------------------------------
+
+                Set<String> synchronizedRemoteMembers = remoteGroupMembers.get(groupName);
+
+                if (synchronizedRemoteMembers != null) {
+
+                        remoteMembers.addAll(
+                                        synchronizedRemoteMembers);
+                }
+
+                // -----------------------------------------------------
+                // Fallback to persistent membership
+                //
+                // MongoDB contains the complete group membership.
+                // Any member who is NOT actually connected to this
+                // server can be treated as a remote candidate.
+                // -----------------------------------------------------
+
+                Set<String> persistentMembers = persistentGroupMembers.get(groupName);
+
+                if (persistentMembers != null) {
+
+                        for (String username : persistentMembers) {
+
+                                if (username == null
+                                                || username.trim().isEmpty()) {
+
+                                        continue;
+                                }
+
+                                username = username.trim();
+
+                                // Do not route the sender
+                                if (username.equals(sender)) {
+                                        continue;
+                                }
+
+                                // If user is actually connected to THIS server,
+                                // local delivery already handles them.
+                                if (onlineUsers.containsKey(username)) {
+                                        continue;
+                                }
+
+                                remoteMembers.add(username);
+                        }
+                }
+
+                // -----------------------------------------------------
+                // Remove sender just to be safe
+                // -----------------------------------------------------
+
+                remoteMembers.remove(sender);
+
+                // =====================================================
+                // START LOCAL GROUP DELIVERIES
+                // =====================================================
+
+                GroupFileTransferTracker tracker = null;
+
+                // LOCAL_GROUP means there are local recipients
+                // and NO remote recipients.
+                if (!localRecipients.isEmpty()
+                                && remoteMembers.isEmpty()) {
+
+                        tracker = new GroupFileTransferTracker(
+                                        sender,
+                                        groupName,
+                                        file,
+                                        localRecipients);
+
+                        System.out.println();
+                        System.out.println(
+                                        "[GROUP-FILE-HISTORY] "
+                                                        + "Local group transfer detected.");
+
+                        System.out.println(
+                                        "[GROUP-FILE-HISTORY] Recipients: "
+                                                        + localRecipients);
+                }
+
+                // Start local deliveries
+                for (String recipient : localRecipients) {
+
+                        ClientHandler recipientHandler = onlineUsers.get(recipient);
+
+                        if (recipientHandler == null) {
+                                continue;
+                        }
+
+                        startLocalGroupFileDelivery(
+                                        file,
+                                        sender,
+                                        recipient,
+                                        recipientHandler,
+                                        tracker);
+                }
+
+                // -----------------------------------------------------
+                // Send file to remote server
+                // -----------------------------------------------------
+
+                if (!remoteMembers.isEmpty()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Remote group members: "
+                                                        + remoteMembers);
+
+                        java.util.Set<String> allRecipients = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+                        allRecipients.addAll(localRecipients);
+                        allRecipients.addAll(remoteMembers);
+
+                        startRemoteGroupFileTransfer(
+                                        file,
+                                        sender,
+                                        groupName,
+                                        remoteMembers,
+                                        allRecipients);
+                } else {
+
+                        System.out.println(
+                                        "[GROUP-FILE] No remote group members "
+                                                        + "found.");
+                }
+
+                // =====================================================
+                // SUCCESS
+                // =====================================================
+
+                return true;
+        }
+
+        // =========================================================
+        // LOCAL GROUP FILE DELIVERY
+        // =========================================================
+
+        private static void startLocalGroupFileDelivery(
+                        java.io.File file,
+                        String sender,
+                        String recipient,
+                        ClientHandler recipientHandler,
+                        GroupFileTransferTracker tracker) {
+
+                try {
+
+                        DistributedFileDeliveryServer deliveryServer = new DistributedFileDeliveryServer(
+                                        file,
+                                        sender,
+                                        recipient,
+                                        recipientHandler,
+                                        tracker);
+
+                        Thread deliveryThread = new Thread(
+                                        deliveryServer,
+                                        "GroupFileDelivery-"
+                                                        + recipient
+                                                        + "-"
+                                                        + file.getName());
+
+                        deliveryThread.start();
+
+                        System.out.println(
+                                        "[GROUP-FILE] Local delivery started: "
+                                                        + sender
+                                                        + " -> "
+                                                        + recipient);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Local delivery error: "
+                                                        + e.getMessage());
+                }
+        }
+        // =========================================================
+        // REMOTE GROUP FILE TRANSFER
+        // =========================================================
+
+        private static void startRemoteGroupFileTransfer(
+                        java.io.File file,
+                        String sender,
+                        String groupName,
+                        Set<String> remoteMembers,
+                        java.util.Set<String> allRecipients) {
+
+                if (serverSynchronizer == null
+                                || !serverSynchronizer.isConnected()) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Remote server is not connected.");
+
+                        return;
+                }
+
+                try {
+
+                        DistributedGroupFileTransferServer transferServer = new DistributedGroupFileTransferServer(
+                                        file,
+                                        sender,
+                                        groupName);
+
+                        Thread transferThread = new Thread(
+                                        transferServer,
+                                        "DistributedGroupFile-"
+                                                        + file.getName());
+
+                        transferThread.start();
+
+                        boolean portReady = transferServer.awaitPort(5000);
+
+                        if (!portReady) {
+
+                                System.out.println(
+                                                "[GROUP-FILE] Unable to start "
+                                                                + "distributed transfer server.");
+
+                                return;
+                        }
+
+                        int transferPort = transferServer.getTransferPort();
+
+                        System.out.println(
+                                        "[GROUP-FILE] Remote transfer port ready: "
+                                                        + transferPort);
+
+                        serverSynchronizer.sendGroupFileRouteRequest(
+                                        sender,
+                                        groupName,
+                                        file.getName(),
+                                        file.length(),
+                                        transferPort,
+                                        allRecipients);
+
+                        System.out.println(
+                                        "[GROUP-FILE] Group file route sent: "
+                                                        + sender
+                                                        + " -> "
+                                                        + groupName);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[GROUP-FILE] Remote transfer error: "
+                                                        + e.getMessage());
+                }
+        }
+
+        private static String getFileType(String fileName) {
+
+                if (fileName == null
+                                || fileName.trim().isEmpty()) {
+
+                        return "unknown";
+                }
+
+                int lastDot = fileName.lastIndexOf('.');
+
+                if (lastDot == -1
+                                || lastDot == fileName.length() - 1) {
+
+                        return "unknown";
+                }
+
+                return fileName
+                                .substring(lastDot + 1)
+                                .toLowerCase();
         }
 
         // =========================================================
