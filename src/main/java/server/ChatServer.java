@@ -12,10 +12,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import service.OfflineGroupMessageService;
+
 import database.MongoDBConnection;
 import model.FileTransferHistory;
 import service.FileTransferHistoryService;
 import service.GroupService;
+import service.OfflineGroupFileService;
 
 public class ChatServer {
 
@@ -63,6 +66,10 @@ public class ChatServer {
 
         private static GroupService groupService;
 
+        private static OfflineGroupMessageService offlineGroupMessageService;
+
+        private static OfflineGroupFileService offlineGroupFileService;
+
         // =========================================================
         // INITIALIZE GROUP PERSISTENCE SERVICE
         // =========================================================
@@ -76,6 +83,22 @@ public class ChatServer {
                         System.out.println(
                                         "[DB] GroupService initialized.");
                 }
+        }
+
+        public static void initializeOfflineServices() {
+
+                if (offlineGroupMessageService == null) {
+
+                        offlineGroupMessageService = new OfflineGroupMessageService();
+                }
+
+                if (offlineGroupFileService == null) {
+
+                        offlineGroupFileService = new OfflineGroupFileService();
+                }
+
+                System.out.println(
+                                "[OFFLINE-GROUP-FILE] Service initialized successfully.");
         }
 
         // =========================================================
@@ -110,9 +133,23 @@ public class ChatServer {
 
                 MongoDBConnection.connect();
 
+                initializeOfflineServices();
+
                 initializeGroupService();
 
                 loadGroupsFromDatabase();
+
+                // =========================================================
+                // MONITORING API
+                // =========================================================
+
+                MonitoringApiServer monitoringApiServer = new MonitoringApiServer(
+                                8081,
+                                "SERVER_1",
+                                "SERVER_2",
+                                8082);
+
+                monitoringApiServer.start();
 
                 // Server 1 = PRIMARY
                 initializeSynchronizer(true);
@@ -1289,16 +1326,71 @@ public class ChatServer {
                                 return false;
                         }
 
-                        // Send to local members
+                        // =====================================================
+                        // SEND TO ONLINE LOCAL MEMBERS
+                        // =====================================================
+
                         for (ClientHandler member : localMembers) {
 
-                                if (member != sender) {
+                                if (member == null
+                                                || member == sender) {
 
-                                        member.sendMessage(
-                                                        "GROUP [" + groupName + "] "
-                                                                        + sender.getUsername()
-                                                                        + ": "
-                                                                        + message);
+                                        continue;
+                                }
+
+                                member.sendMessage(
+                                                "GROUP [" + groupName + "] "
+                                                                + sender.getUsername()
+                                                                + ": "
+                                                                + message);
+                        }
+
+                        // =====================================================
+                        // QUEUE OFFLINE LOCAL MEMBERS
+                        // =====================================================
+
+                        List<String> persistentMembers = groupService.getMembers(groupName);
+
+                        if (persistentMembers != null) {
+
+                                for (String memberUsername : persistentMembers) {
+
+                                        if (memberUsername == null
+                                                        || memberUsername.trim().isEmpty()) {
+
+                                                continue;
+                                        }
+
+                                        memberUsername = memberUsername.trim();
+
+                                        // Don't queue sender
+                                        if (memberUsername.equalsIgnoreCase(
+                                                        sender.getUsername())) {
+
+                                                continue;
+                                        }
+
+                                        // Already online on this server
+                                        if (getOnlineUser(memberUsername) != null) {
+
+                                                continue;
+                                        }
+
+                                        boolean saved = offlineGroupMessageService
+                                                        .savePendingGroupMessage(
+                                                                        sender.getUsername(),
+                                                                        memberUsername,
+                                                                        groupName,
+                                                                        message);
+
+                                        if (saved) {
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-MESSAGE] "
+                                                                                + memberUsername
+                                                                                + " is offline. "
+                                                                                + "Message queued.");
+                                        }
                                 }
                         }
 
@@ -2560,54 +2652,113 @@ public class ChatServer {
 
                 System.out.println(
                                 "[ROUTE] Delivering remote group message: "
-                                                + sender + " -> " + groupName);
+                                                + sender
+                                                + " -> "
+                                                + groupName);
 
                 // =====================================================
-                // CASE 1: GROUP IS LOCAL HERE
+                // GET PERSISTENT GROUP MEMBERS
                 // =====================================================
 
-                Set<ClientHandler> localMembers = groups.get(groupName);
+                List<String> members = groupService.getMembers(groupName);
 
-                if (localMembers != null) {
+                if (members == null || members.isEmpty()) {
 
                         System.out.println(
-                                        "[ROUTE] Group " + groupName
-                                                        + " exists locally. Delivering to local members.");
-
-                        for (ClientHandler client : localMembers) {
-
-                                client.sendMessage(formattedMessage);
-                        }
+                                        "[ROUTE] No persistent members found for group: "
+                                                        + groupName);
 
                         return;
                 }
 
                 // =====================================================
-                // CASE 2: GROUP IS REMOTE HERE
+                // DELIVER / QUEUE EACH MEMBER
                 // =====================================================
 
                 boolean delivered = false;
 
-                for (ClientHandler client : onlineUsers.values()) {
+                for (String memberUsername : members) {
 
-                        if (client.isRemoteGroupMember(groupName)) {
+                        if (memberUsername == null
+                                        || memberUsername.trim().isEmpty()) {
 
-                                client.sendMessage(formattedMessage);
+                                continue;
+                        }
+
+                        memberUsername = memberUsername.trim();
+
+                        // -------------------------------------------------
+                        // Do not send the message back to the original sender
+                        // -------------------------------------------------
+
+                        if (memberUsername.equalsIgnoreCase(sender)) {
+
+                                continue;
+                        }
+
+                        // -------------------------------------------------
+                        // CHECK IF MEMBER IS ONLINE ON THIS SERVER
+                        // -------------------------------------------------
+
+                        ClientHandler client = getOnlineUser(memberUsername);
+
+                        if (client != null) {
+
+                                client.sendMessage(
+                                                formattedMessage);
 
                                 delivered = true;
+
+                                System.out.println(
+                                                "[GROUP-MESSAGE] Delivered to online member: "
+                                                                + memberUsername);
+
+                        } else {
+
+                                // -------------------------------------------------
+                                // MEMBER IS OFFLINE
+                                // -------------------------------------------------
+
+                                boolean saved = offlineGroupMessageService
+                                                .savePendingGroupMessage(
+                                                                sender,
+                                                                memberUsername,
+                                                                groupName,
+                                                                message);
+
+                                if (saved) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-MESSAGE] "
+                                                                        + memberUsername
+                                                                        + " is offline. "
+                                                                        + "Message queued.");
+
+                                } else {
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-MESSAGE] "
+                                                                        + "Unable to queue message for "
+                                                                        + memberUsername);
+                                }
                         }
                 }
+
+                // =====================================================
+                // RESULT
+                // =====================================================
 
                 if (delivered) {
 
                         System.out.println(
-                                        "[ROUTE] Message delivered to remote-group members.");
+                                        "[ROUTE] Group message delivered to "
+                                                        + "online members.");
 
                 } else {
 
                         System.out.println(
-                                        "[ROUTE] No local members found for remote group "
-                                                        + groupName);
+                                        "[ROUTE] No online members found. "
+                                                        + "Offline messages queued.");
                 }
         }
 
@@ -2623,6 +2774,11 @@ public class ChatServer {
         public static int getGroupCount() {
 
                 return groups.size();
+        }
+
+        public static OfflineGroupFileService getOfflineGroupFileService() {
+
+                return offlineGroupFileService;
         }
 
         // =========================================================

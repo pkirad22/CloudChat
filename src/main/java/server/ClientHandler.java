@@ -1,13 +1,22 @@
 package server;
 
 import java.io.BufferedReader;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.bson.Document;
+import org.bson.types.ObjectId;
+
+import service.FileValidationService;
+
+import service.OfflineMessageService;
+import service.OfflineGroupMessageService;
 
 import model.User;
 import model.Message;
@@ -15,6 +24,7 @@ import model.Message;
 import service.UserService;
 import service.ChatHistoryService;
 import service.GroupService;
+import service.OfflineFileService;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,6 +68,13 @@ public class ClientHandler implements Runnable {
         private final ChatHistoryService chatHistoryService;
 
         private final GroupService groupService;
+
+        private final OfflineMessageService offlineMessageService;
+
+        private final OfflineFileService offlineFileService;
+
+        private final OfflineGroupMessageService offlineGroupMessageService;
+
         // =========================================================
         // CONSTRUCTOR
         // =========================================================
@@ -71,6 +88,12 @@ public class ClientHandler implements Runnable {
                 this.groupService = new GroupService();
 
                 this.chatHistoryService = new ChatHistoryService();
+
+                this.offlineMessageService = new OfflineMessageService();
+
+                this.offlineFileService = new OfflineFileService();
+
+                this.offlineGroupMessageService = new OfflineGroupMessageService();
         }
 
         // =========================================================
@@ -95,6 +118,22 @@ public class ClientHandler implements Runnable {
                         // =================================================
 
                         boolean authenticated = false;
+
+                        // =================================================
+                        // SERVER LOAD INFORMATION
+                        // =================================================
+
+                        ServerLoadMonitor loadMonitor = new ServerLoadMonitor();
+
+                        double loadScore = loadMonitor.getLoadScore();
+
+                        String loadLevel = loadMonitor.getLoadLevel();
+
+                        sendMessage(
+                                        "SERVER_LOAD:"
+                                                        + String.format("%.2f", loadScore)
+                                                        + ":"
+                                                        + loadLevel);
 
                         while (!authenticated) {
 
@@ -270,6 +309,18 @@ public class ClientHandler implements Runnable {
                                                                         + username
                                                                         + "!");
 
+                                        // =================================================
+                                        // DELIVER OFFLINE MESSAGES
+                                        // =================================================
+
+                                        deliverOfflineMessages();
+
+                                        deliverOfflineFiles();
+
+                                        deliverOfflineGroupMessages();
+
+                                        deliverOfflineGroupFiles();
+
                                         // =============================================
                                         // BROADCAST USER JOIN
                                         // =============================================
@@ -341,12 +392,55 @@ public class ClientHandler implements Runnable {
 
                                 if (message.equalsIgnoreCase("/load")) {
 
-                                        ServerLoadMonitor loadMonitor = new ServerLoadMonitor();
+                                        ServerLoadMonitor monitor = new ServerLoadMonitor();
 
-                                        loadMonitor.printLoadInformation();
+                                        monitor.printLoadInformation();
 
                                         sendMessage(
                                                         "SYSTEM: Load information printed on server console.");
+
+                                        continue;
+                                }
+
+                                // =================================================
+                                // CONNECTION LOAD CHECK
+                                // =================================================
+
+                                if (message.equalsIgnoreCase("/connectionload")) {
+
+                                        ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                                        if (synchronizer == null) {
+
+                                                sendMessage(
+                                                                "SYSTEM: Server synchronizer is not available.");
+
+                                                continue;
+                                        }
+
+                                        ServerLoadMonitor monitor = new ServerLoadMonitor();
+
+                                        double localLoad = monitor.getLoadScore();
+
+                                        double remoteLoad = synchronizer.getRemoteLoadScore();
+
+                                        String localServer = synchronizer.isPrimaryServer()
+                                                        ? "SERVER1"
+                                                        : "SERVER2";
+
+                                        String remoteServer = synchronizer.isPrimaryServer()
+                                                        ? "SERVER2"
+                                                        : "SERVER1";
+
+                                        sendMessage(
+                                                        "CONNECTION_LOAD:"
+                                                                        + localServer
+                                                                        + ":"
+                                                                        + localLoad
+                                                                        + ":"
+                                                                        + remoteServer
+                                                                        + ":"
+                                                                        + remoteLoad);
 
                                         continue;
                                 }
@@ -813,10 +907,17 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                if (!isSupportedFile(file)) {
+                if (!FileValidationService.isAllowed(file)) {
                         sendMessage("SYSTEM: Unsupported file type.");
+
                         sendMessage(
-                                        "SYSTEM: Supported files: Images, PDF and Audio.");
+                                        "SYSTEM: Supported file categories: "
+                                                        + "Images, Documents, Office, Audio, Video, Archives and Code.");
+
+                        sendMessage(
+                                        "SYSTEM: File type: "
+                                                        + FileValidationService.getFileType(file));
+
                         return;
                 }
 
@@ -871,9 +972,9 @@ public class ClientHandler implements Runnable {
                                                         + " -> "
                                                         + recipient);
 
-                        // ---------------------------------------------------------
+                        // -------------------------------------------------
                         // Start distributed file transfer server
-                        // ---------------------------------------------------------
+                        // -------------------------------------------------
 
                         DistributedFileTransferServer transferServer = new DistributedFileTransferServer(
                                         file,
@@ -887,9 +988,9 @@ public class ClientHandler implements Runnable {
 
                         transferThread.start();
 
-                        // ---------------------------------------------------------
+                        // -------------------------------------------------
                         // Wait until transfer port is ready
-                        // ---------------------------------------------------------
+                        // -------------------------------------------------
 
                         boolean portReady = transferServer.awaitPort(5000);
 
@@ -907,9 +1008,9 @@ public class ClientHandler implements Runnable {
                                         "[FILE-DIST] Transfer port ready: "
                                                         + transferPort);
 
-                        // ---------------------------------------------------------
+                        // -------------------------------------------------
                         // Send routing request to remote server
-                        // ---------------------------------------------------------
+                        // -------------------------------------------------
 
                         boolean routed = ChatServer.sendFileRouteRequest(
                                         username,
@@ -933,13 +1034,35 @@ public class ClientHandler implements Runnable {
                 }
 
                 // -----------------------------------------------------
-                // Recipient not online
+                // Recipient is offline
                 // -----------------------------------------------------
 
-                sendMessage(
-                                "SYSTEM: User '"
-                                                + recipient
-                                                + "' is not online.");
+                System.out.println(
+                                "[OFFLINE-FILE] Recipient offline: "
+                                                + recipient);
+
+                boolean saved = offlineFileService.savePendingFile(
+                                username,
+                                recipient,
+                                file);
+
+                if (saved) {
+
+                        sendMessage(
+                                        "SYSTEM: "
+                                                        + recipient
+                                                        + " is offline.");
+
+                        sendMessage(
+                                        "SYSTEM: File saved and will be delivered when "
+                                                        + recipient
+                                                        + " comes online.");
+
+                } else {
+
+                        sendMessage(
+                                        "SYSTEM: Unable to save file for offline delivery.");
+                }
         }
 
         private void handleGroupFile(String message) {
@@ -982,14 +1105,18 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                if (!isSupportedFile(file)) {
+                if (!FileValidationService.isAllowed(file)) {
 
                         sendMessage(
                                         "SYSTEM: Unsupported file type.");
 
                         sendMessage(
-                                        "SYSTEM: Supported files: "
-                                                        + "Images, PDF and Audio.");
+                                        "SYSTEM: Supported file categories: "
+                                                        + "Images, Documents, Office, Audio, Video, Archives and Code.");
+
+                        sendMessage(
+                                        "SYSTEM: Detected file type: "
+                                                        + FileValidationService.getFileType(file));
 
                         return;
                 }
@@ -2216,8 +2343,7 @@ public class ClientHandler implements Runnable {
         // PRIVATE MESSAGE
         // =========================================================
 
-        private void handlePrivateMessage(
-                        String message) {
+        private void handlePrivateMessage(String message) {
 
                 String[] parts = message.split(" ", 3);
 
@@ -2232,52 +2358,109 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
-                String recipient = parts[1];
+                String recipient = parts[1].trim();
 
-                String privateMessage = parts[2];
+                String privateMessage = parts[2].trim();
+
+                if (recipient.isEmpty() || privateMessage.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Username and message cannot be empty.");
+
+                        return;
+                }
+
+                // =====================================================
+                // CHECK WHETHER RECIPIENT IS ONLINE
+                // =====================================================
 
                 boolean sent = ChatServer.sendPrivateMessage(
                                 username,
                                 recipient,
                                 privateMessage);
 
-                if (sent) {
+                // =====================================================
+                // CREATE CHAT HISTORY RECORD
+                // =====================================================
 
-                        /*
-                         * Save the private message ONLY on the
-                         * originating server.
-                         *
-                         * Both servers use the same MongoDB database,
-                         * so the history is available regardless of
-                         * which server the user later connects to.
-                         */
-                        Message chatMessage = new Message(
-                                        username,
-                                        recipient,
-                                        null,
-                                        privateMessage,
-                                        "PRIVATE",
-                                        LocalDateTime.now());
+                Message chatMessage = new Message(
+                                username,
+                                recipient,
+                                null,
+                                privateMessage,
+                                "PRIVATE",
+                                LocalDateTime.now());
+
+                // =====================================================
+                // RECIPIENT ONLINE
+                // =====================================================
+
+                if (sent) {
 
                         chatHistoryService.saveMessage(
                                         chatMessage);
 
-                        /*
-                         * Tell sender that the message was successfully
-                         * delivered/routed.
-                         */
                         sendMessage(
                                         "PRIVATE to "
                                                         + recipient
                                                         + ": "
                                                         + privateMessage);
 
+                        System.out.println(
+                                        "[PRIVATE] Message delivered: "
+                                                        + username
+                                                        + " -> "
+                                                        + recipient);
+
+                        return;
+                }
+
+                // =====================================================
+                // RECIPIENT OFFLINE
+                // =====================================================
+
+                System.out.println(
+                                "[OFFLINE-MESSAGE] Recipient offline: "
+                                                + recipient);
+
+                // -----------------------------------------------------
+                // SAVE PERMANENT CHAT HISTORY
+                // -----------------------------------------------------
+
+                chatHistoryService.saveMessage(
+                                chatMessage);
+
+                // -----------------------------------------------------
+                // SAVE TO OFFLINE MESSAGE QUEUE
+                // -----------------------------------------------------
+
+                boolean saved = offlineMessageService.savePendingMessage(
+                                username,
+                                recipient,
+                                privateMessage);
+
+                if (saved) {
+
+                        sendMessage(
+                                        "SYSTEM: "
+                                                        + recipient
+                                                        + " is offline.");
+
+                        sendMessage(
+                                        "SYSTEM: Message saved and will be delivered "
+                                                        + "when "
+                                                        + recipient
+                                                        + " comes online.");
+
                 } else {
 
                         sendMessage(
-                                        "SYSTEM: User '"
+                                        "SYSTEM: "
                                                         + recipient
-                                                        + "' is not online.");
+                                                        + " is offline.");
+
+                        sendMessage(
+                                        "SYSTEM: Failed to save message for offline delivery.");
                 }
         }
 
@@ -2291,6 +2474,442 @@ public class ClientHandler implements Runnable {
                 if (output != null) {
 
                         output.println(message);
+                }
+        }
+
+        // =========================================================
+        // DELIVER OFFLINE MESSAGES
+        // =========================================================
+
+        private void deliverOfflineMessages() {
+
+                if (username == null || username.trim().isEmpty()) {
+
+                        return;
+                }
+
+                try {
+
+                        List<org.bson.Document> pendingMessages = offlineMessageService.getPendingMessages(username);
+
+                        if (pendingMessages.isEmpty()) {
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[OFFLINE-MESSAGE] Delivering "
+                                                        + pendingMessages.size()
+                                                        + " pending message(s) to "
+                                                        + username);
+
+                        sendMessage(
+                                        "OFFLINE_MESSAGES_START");
+
+                        sendMessage(
+                                        "SYSTEM: You have "
+                                                        + pendingMessages.size()
+                                                        + " pending message(s).");
+
+                        for (org.bson.Document document : pendingMessages) {
+
+                                String sender = document.getString("sender");
+
+                                String message = document.getString("message");
+
+                                String timestamp = document.getString("timestamp");
+
+                                sendMessage(
+                                                "OFFLINE_MESSAGE:"
+                                                                + sender
+                                                                + ":"
+                                                                + timestamp
+                                                                + ":"
+                                                                + message);
+
+                                org.bson.types.ObjectId messageId = document.getObjectId("_id");
+
+                                offlineMessageService.deletePendingMessage(
+                                                messageId);
+                        }
+
+                        sendMessage(
+                                        "OFFLINE_MESSAGES_END");
+
+                        System.out.println(
+                                        "[OFFLINE-MESSAGE] All pending messages "
+                                                        + "delivered to "
+                                                        + username);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-MESSAGE] Delivery error: "
+                                                        + e.getMessage());
+                }
+
+        }
+
+        // =========================================================
+        // DELIVER OFFLINE GROUP MESSAGES
+        // =========================================================
+
+        private void deliverOfflineGroupMessages() {
+
+                try {
+
+                        List<Document> pendingMessages = offlineGroupMessageService
+                                        .getPendingGroupMessages(username);
+
+                        if (pendingMessages.isEmpty()) {
+                                return;
+                        }
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "[OFFLINE-GROUP-MESSAGE] "
+                                                        + pendingMessages.size()
+                                                        + " pending group message(s) found for "
+                                                        + username);
+
+                        sendMessage(
+                                        "OFFLINE_GROUP_MESSAGES_START");
+
+                        sendMessage(
+                                        "SYSTEM: You have "
+                                                        + pendingMessages.size()
+                                                        + " pending group message(s).");
+
+                        for (Document document : pendingMessages) {
+
+                                String sender = document.getString("sender");
+
+                                String groupName = document.getString("groupName");
+
+                                String message = document.getString("message");
+
+                                String timestamp = document.getString("timestamp");
+
+                                // ---------------------------------------------
+                                // SEND TO CLIENT
+                                // ---------------------------------------------
+
+                                sendMessage(
+                                                "OFFLINE_GROUP_MESSAGE:"
+                                                                + groupName
+                                                                + ":"
+                                                                + sender
+                                                                + ":"
+                                                                + timestamp
+                                                                + ":"
+                                                                + message);
+
+                                System.out.println(
+                                                "[OFFLINE-GROUP-MESSAGE] Delivered: "
+                                                                + sender
+                                                                + " -> "
+                                                                + username
+                                                                + " ["
+                                                                + groupName
+                                                                + "]");
+
+                                // ---------------------------------------------
+                                // REMOVE FROM QUEUE
+                                // ---------------------------------------------
+
+                                org.bson.types.ObjectId id = document.getObjectId("_id");
+
+                                offlineGroupMessageService
+                                                .deletePendingGroupMessage(id);
+                        }
+
+                        sendMessage(
+                                        "OFFLINE_GROUP_MESSAGES_END");
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-GROUP-MESSAGE] "
+                                                        + "Delivery failed: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // DELIVER OFFLINE FILES
+        // =========================================================
+
+        private void deliverOfflineFiles() {
+
+                if (username == null || username.trim().isEmpty()) {
+                        return;
+                }
+
+                try {
+
+                        List<Document> pendingFiles = offlineFileService.getPendingFiles(username);
+
+                        if (pendingFiles.isEmpty()) {
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Delivering "
+                                                        + pendingFiles.size()
+                                                        + " pending file(s) to "
+                                                        + username);
+
+                        sendMessage("OFFLINE_FILES_START");
+
+                        sendMessage(
+                                        "SYSTEM: You have "
+                                                        + pendingFiles.size()
+                                                        + " pending file(s).");
+
+                        for (Document document : pendingFiles) {
+
+                                String sender = document.getString("sender");
+
+                                String fileName = document.getString("fileName");
+
+                                long fileSize = document.getLong("fileSize");
+
+                                org.bson.types.ObjectId gridFsFileId = document.getObjectId("gridFsFileId");
+
+                                // -------------------------------------------------
+                                // Create temporary delivery server
+                                // -------------------------------------------------
+
+                                ServerSocket deliveryServer = new ServerSocket(0);
+
+                                int deliveryPort = deliveryServer.getLocalPort();
+
+                                System.out.println(
+                                                "[OFFLINE-FILE] Delivery port ready: "
+                                                                + deliveryPort);
+
+                                // -------------------------------------------------
+                                // Tell client where to download the file
+                                // -------------------------------------------------
+
+                                sendMessage(
+                                                "OFFLINE_FILE_READY:"
+                                                                + sender
+                                                                + ":"
+                                                                + username
+                                                                + ":"
+                                                                + fileName
+                                                                + ":"
+                                                                + fileSize
+                                                                + ":"
+                                                                + deliveryPort);
+
+                                // -------------------------------------------------
+                                // Wait for client connection
+                                // -------------------------------------------------
+
+                                try (
+                                                Socket fileSocket = deliveryServer.accept();
+
+                                                DataOutputStream output = new DataOutputStream(
+                                                                fileSocket.getOutputStream())) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-FILE] Client connected for: "
+                                                                        + fileName);
+
+                                        // -------------------------------------------------
+                                        // Send file metadata
+                                        // -------------------------------------------------
+
+                                        output.writeUTF(fileName);
+                                        output.writeLong(fileSize);
+
+                                        output.flush();
+
+                                        // -------------------------------------------------
+                                        // Download from GridFS directly into socket
+                                        // -------------------------------------------------
+
+                                        offlineFileService.downloadFileToStream(
+                                                        gridFsFileId,
+                                                        output);
+
+                                        output.flush();
+
+                                        System.out.println(
+                                                        "[OFFLINE-FILE] File delivered successfully: "
+                                                                        + fileName);
+
+                                        // -------------------------------------------------
+                                        // Remove queue entry + GridFS file
+                                        // -------------------------------------------------
+
+                                        offlineFileService.deletePendingFile(
+                                                        document.getObjectId("_id"));
+                                }
+
+                                deliveryServer.close();
+                        }
+
+                        sendMessage("OFFLINE_FILES_END");
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] All pending files delivered to "
+                                                        + username);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Delivery error: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // DELIVER OFFLINE GROUP FILES
+        // =========================================================
+
+        private void deliverOfflineGroupFiles() {
+
+                try {
+
+                        List<Document> pendingFiles = ChatServer.getOfflineGroupFileService()
+                                        .getPendingGroupFiles(username);
+
+                        if (pendingFiles.isEmpty()) {
+                                return;
+                        }
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "[OFFLINE-GROUP-FILE] "
+                                                        + pendingFiles.size()
+                                                        + " pending group file(s) found for "
+                                                        + username);
+
+                        sendMessage(
+                                        "OFFLINE_GROUP_FILES_START");
+
+                        sendMessage(
+                                        "SYSTEM: You have "
+                                                        + pendingFiles.size()
+                                                        + " pending group file(s).");
+
+                        for (Document document : pendingFiles) {
+
+                                String sender = document.getString("sender");
+
+                                String groupName = document.getString("groupName");
+
+                                String fileName = document.getString("fileName");
+
+                                long fileSize = document.getLong("fileSize");
+
+                                ObjectId gridFsFileId = document.getObjectId(
+                                                "gridFsFileId");
+
+                                // -------------------------------------------------
+                                // Create dynamic transfer port
+                                // -------------------------------------------------
+
+                                try (ServerSocket fileServerSocket = new ServerSocket(0)) {
+
+                                        int deliveryPort = fileServerSocket.getLocalPort();
+
+                                        sendMessage(
+                                                        "OFFLINE_GROUP_FILE_READY:"
+                                                                        + groupName
+                                                                        + ":"
+                                                                        + sender
+                                                                        + ":"
+                                                                        + fileName
+                                                                        + ":"
+                                                                        + fileSize
+                                                                        + ":"
+                                                                        + deliveryPort);
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-FILE] "
+                                                                        + "Waiting for client connection on port "
+                                                                        + deliveryPort);
+
+                                        // -------------------------------------------------
+                                        // Wait for client to connect
+                                        // -------------------------------------------------
+
+                                        try (Socket fileSocket = fileServerSocket.accept()) {
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "Client connected for "
+                                                                                + fileName);
+
+                                                DataOutputStream outputStream = new DataOutputStream(
+                                                                fileSocket.getOutputStream());
+
+                                                // -------------------------------------------------
+                                                // Send file metadata
+                                                // -------------------------------------------------
+
+                                                outputStream.writeUTF(fileName);
+
+                                                outputStream.writeLong(fileSize);
+
+                                                outputStream.flush();
+
+                                                // -------------------------------------------------
+                                                // Stream file from GridFS
+                                                // -------------------------------------------------
+
+                                                ChatServer.getOfflineGroupFileService()
+                                                                .downloadFileToStream(
+                                                                                gridFsFileId,
+                                                                                outputStream);
+
+                                                outputStream.flush();
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "Delivered: "
+                                                                                + sender
+                                                                                + " -> "
+                                                                                + username
+                                                                                + " ["
+                                                                                + groupName
+                                                                                + "] "
+                                                                                + fileName);
+                                        }
+
+                                        // -------------------------------------------------
+                                        // Delete only after successful transfer
+                                        // -------------------------------------------------
+
+                                        ChatServer.getOfflineGroupFileService()
+                                                        .deletePendingGroupFile(
+                                                                        document.getObjectId("_id"));
+
+                                } catch (Exception e) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-FILE] "
+                                                                        + "Unable to deliver "
+                                                                        + fileName
+                                                                        + ": "
+                                                                        + e.getMessage());
+                                }
+                        }
+
+                        sendMessage(
+                                        "OFFLINE_GROUP_FILES_END");
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-GROUP-FILE] Delivery failed: "
+                                                        + e.getMessage());
                 }
         }
 

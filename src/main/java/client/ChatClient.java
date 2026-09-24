@@ -172,6 +172,21 @@ public class ChatClient {
                         return;
                 }
 
+                // =================================================
+                // LOAD-AWARE CONNECTION CHECK
+                // =================================================
+
+                if (!checkServerLoadAfterAuthentication(scanner)) {
+
+                        if (!loadBalanceRedirecting) {
+
+                                closeConnection();
+                                scanner.close();
+                        }
+
+                        return;
+                }
+
                 // =====================================================
                 // CONNECTION STATUS
                 // =====================================================
@@ -623,6 +638,632 @@ public class ChatClient {
         }
 
         // =========================================================
+        // LOAD-AWARE CONNECTION CHECK
+        // =========================================================
+
+        private static boolean checkServerLoadAfterAuthentication(
+                        Scanner scanner) {
+
+                try {
+
+                        // =================================================
+                        // REQUEST LOAD INFORMATION
+                        // =================================================
+
+                        serverOutput.println("/connectionload");
+
+                        String response;
+
+                        while (true) {
+
+                                response = serverInput.readLine();
+
+                                if (response == null) {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "Server disconnected while checking load.");
+
+                                        return false;
+                                }
+
+                                // =================================================
+                                // OFFLINE MESSAGE QUEUE
+                                // =================================================
+
+                                if (response.equals("OFFLINE_MESSAGES_START")) {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "=================================");
+
+                                        System.out.println(
+                                                        "       OFFLINE MESSAGES");
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                if (response.startsWith("SYSTEM: You have ")
+                                                && response.contains("pending message")) {
+
+                                        System.out.println();
+                                        System.out.println(response);
+
+                                        continue;
+                                }
+
+                                if (response.startsWith("OFFLINE_MESSAGE:")) {
+
+                                        try {
+
+                                                String data = response.substring(
+                                                                "OFFLINE_MESSAGE:".length());
+
+                                                int firstColon = data.indexOf(':');
+
+                                                int lastColon = data.lastIndexOf(':');
+
+                                                if (firstColon > 0
+                                                                && lastColon > firstColon) {
+
+                                                        String sender = data.substring(
+                                                                        0,
+                                                                        firstColon);
+
+                                                        String timestamp = data.substring(
+                                                                        firstColon + 1,
+                                                                        lastColon);
+
+                                                        String message = data.substring(
+                                                                        lastColon + 1);
+
+                                                        System.out.println();
+
+                                                        System.out.println(
+                                                                        "From: "
+                                                                                        + sender);
+
+                                                        System.out.println(
+                                                                        "Message: "
+                                                                                        + message);
+
+                                                        System.out.println(
+                                                                        "Time: "
+                                                                                        + timestamp);
+
+                                                        System.out.println(
+                                                                        "---------------------------------");
+
+                                                } else {
+
+                                                        System.out.println();
+
+                                                        System.out.println(
+                                                                        "Offline message: "
+                                                                                        + response);
+                                                }
+
+                                        } catch (Exception e) {
+
+                                                System.out.println();
+
+                                                System.out.println(
+                                                                "Offline message: "
+                                                                                + response);
+                                        }
+
+                                        continue;
+                                }
+
+                                if (response.equals("OFFLINE_MESSAGES_END")) {
+
+                                        System.out.println();
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                // =================================================
+                                // OFFLINE FILE QUEUE
+                                // =================================================
+
+                                if (response.equals("OFFLINE_FILES_START")) {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "=================================");
+
+                                        System.out.println(
+                                                        "       OFFLINE FILES");
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                if (response.startsWith("SYSTEM: You have ")
+                                                && response.contains("pending file")) {
+
+                                        System.out.println();
+
+                                        System.out.println(response);
+
+                                        continue;
+                                }
+
+                                if (response.startsWith("OFFLINE_FILE_READY:")) {
+
+                                        receiveOfflineFile(response);
+
+                                        continue;
+                                }
+
+                                if (response.equals("OFFLINE_FILES_END")) {
+
+                                        System.out.println();
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                if (response.equals("OFFLINE_GROUP_MESSAGES_START")) {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "=================================");
+
+                                        System.out.println(
+                                                        "     OFFLINE GROUP MESSAGES");
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                if (response.startsWith(
+                                                "SYSTEM: You have ")
+                                                && response.contains(
+                                                                "pending group message")) {
+
+                                        System.out.println();
+                                        System.out.println(response);
+
+                                        continue;
+                                }
+
+                                if (response.startsWith(
+                                                "OFFLINE_GROUP_MESSAGE:")) {
+
+                                        String data = response.substring(
+                                                        "OFFLINE_GROUP_MESSAGE:".length());
+
+                                        String[] parts = data.split(":", 4);
+
+                                        if (parts.length >= 4) {
+
+                                                String groupName = parts[0];
+                                                String sender = parts[1];
+                                                String timestamp = parts[2];
+                                                String message = parts[3];
+
+                                                System.out.println();
+
+                                                System.out.println(
+                                                                "GROUP ["
+                                                                                + groupName
+                                                                                + "] "
+                                                                                + sender
+                                                                                + ": "
+                                                                                + message);
+                                        }
+
+                                        continue;
+                                }
+
+                                if (response.equals(
+                                                "OFFLINE_GROUP_MESSAGES_END")) {
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                // =========================================================
+                                // OFFLINE GROUP FILE
+                                // =========================================================
+
+                                if (response.equals(
+                                                "OFFLINE_GROUP_FILES_START")) {
+
+                                        System.out.println();
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        System.out.println(
+                                                        "     OFFLINE GROUP FILES");
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                if (response.startsWith(
+                                                "OFFLINE_GROUP_FILE_READY:")) {
+
+                                        String data = response.substring(
+                                                        "OFFLINE_GROUP_FILE_READY:".length());
+
+                                        String[] parts = data.split(":", 5);
+
+                                        if (parts.length >= 5) {
+
+                                                String groupName = parts[0];
+
+                                                String sender = parts[1];
+
+                                                String fileName = parts[2];
+
+                                                long fileSize;
+
+                                                int deliveryPort;
+
+                                                try {
+
+                                                        fileSize = Long.parseLong(
+                                                                        parts[3]);
+
+                                                        deliveryPort = Integer.parseInt(
+                                                                        parts[4]);
+
+                                                } catch (NumberFormatException e) {
+
+                                                        System.out.println(
+                                                                        "SYSTEM: Invalid offline group file information.");
+
+                                                        continue;
+                                                }
+
+                                                System.out.println();
+
+                                                System.out.println(
+                                                                "Receiving group file from "
+                                                                                + sender
+                                                                                + " ["
+                                                                                + groupName
+                                                                                + "]: "
+                                                                                + fileName);
+
+                                                System.out.println(
+                                                                "File size: "
+                                                                                + fileSize
+                                                                                + " bytes");
+
+                                                receiveOfflineGroupFile(
+                                                                groupName,
+                                                                sender,
+                                                                fileName,
+                                                                fileSize,
+                                                                deliveryPort);
+                                        }
+
+                                        continue;
+                                }
+
+                                if (response.equals(
+                                                "OFFLINE_GROUP_FILES_END")) {
+
+                                        System.out.println(
+                                                        "=================================");
+
+                                        continue;
+                                }
+
+                                // =================================================
+                                // CONNECTION LOAD RESPONSE
+                                // =================================================
+
+                                if (response.startsWith("CONNECTION_LOAD:")) {
+
+                                        break;
+                                }
+
+                                // =================================================
+                                // NORMAL POST-LOGIN MESSAGES
+                                // =================================================
+
+                                if (response.startsWith("ONLINE_USERS:")) {
+
+                                        continue;
+                                }
+
+                                if (response.startsWith("GROUPS:")) {
+
+                                        continue;
+                                }
+
+                                // =================================================
+                                // OTHER ASYNCHRONOUS STARTUP MESSAGES
+                                // =================================================
+
+                                System.out.println(
+                                                "[LOAD CHECK] Ignoring server message: "
+                                                                + response);
+                        }
+
+                        // =========================================================
+                        // PARSE LOAD INFORMATION
+                        // =========================================================
+
+                        String[] parts = response.split(":", 5);
+
+                        if (parts.length < 5) {
+
+                                System.out.println();
+                                System.out.println(
+                                                "Invalid server load information.");
+
+                                return true;
+                        }
+
+                        String localServer = parts[1].trim();
+
+                        double localLoad = Double.parseDouble(
+                                        parts[2].trim());
+
+                        String remoteServer = parts[3].trim();
+
+                        double remoteLoad = Double.parseDouble(
+                                        parts[4].trim());
+
+                        // =========================================================
+                        // DISPLAY LOAD
+                        // =========================================================
+
+                        System.out.println();
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        "       SERVER LOAD STATUS");
+
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.printf(
+                                        "%s Load : %.2f%n",
+                                        localServer,
+                                        localLoad);
+
+                        if (remoteLoad < 0) {
+
+                                System.out.println(
+                                                remoteServer
+                                                                + " Load : NOT AVAILABLE");
+
+                        } else {
+
+                                System.out.printf(
+                                                "%s Load : %.2f%n",
+                                                remoteServer,
+                                                remoteLoad);
+                        }
+
+                        System.out.println(
+                                        "=================================");
+
+                        // =========================================================
+                        // CURRENT SERVER IS ACCEPTABLE
+                        // =========================================================
+
+                        if (localLoad < 85) {
+
+                                System.out.println(
+                                                "Current server load is acceptable.");
+
+                                System.out.println(
+                                                "Continuing with current server.");
+
+                                System.out.println(
+                                                "=================================");
+
+                                return true;
+                        }
+
+                        // =========================================================
+                        // CURRENT SERVER IS OVERLOADED
+                        // =========================================================
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        "       SERVER OVERLOADED");
+
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        localServer
+                                                        + " is currently overloaded.");
+
+                        System.out.printf(
+                                        "Current load: %.2f%n",
+                                        localLoad);
+
+                        // =========================================================
+                        // OTHER SERVER UNAVAILABLE
+                        // =========================================================
+
+                        if (remoteLoad < 0) {
+
+                                System.out.println();
+
+                                System.out.println(
+                                                "The other server's load "
+                                                                + "is currently unavailable.");
+
+                                System.out.println(
+                                                "Please try again later.");
+
+                                System.out.println(
+                                                "=================================");
+
+                                return false;
+                        }
+
+                        // =========================================================
+                        // BOTH SERVERS OVERLOADED
+                        // =========================================================
+
+                        if (remoteLoad >= 85) {
+
+                                System.out.println();
+
+                                System.out.println(
+                                                "Both CloudChat servers "
+                                                                + "are currently overloaded.");
+
+                                System.out.printf(
+                                                "%s load: %.2f%n",
+                                                localServer,
+                                                localLoad);
+
+                                System.out.printf(
+                                                "%s load: %.2f%n",
+                                                remoteServer,
+                                                remoteLoad);
+
+                                System.out.println();
+
+                                System.out.println(
+                                                "Please try again later.");
+
+                                System.out.println(
+                                                "=================================");
+
+                                return false;
+                        }
+
+                        // =========================================================
+                        // OTHER SERVER AVAILABLE
+                        // =========================================================
+
+                        System.out.println();
+
+                        System.out.println(
+                                        remoteServer
+                                                        + " is available.");
+
+                        System.out.printf(
+                                        "%s load: %.2f%n",
+                                        remoteServer,
+                                        remoteLoad);
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "Would you like to switch to "
+                                                        + remoteServer
+                                                        + "?");
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "1. Yes");
+
+                        System.out.println(
+                                        "2. No");
+
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.print(
+                                        "Enter choice: ");
+
+                        if (!scanner.hasNextLine()) {
+
+                                return false;
+                        }
+
+                        String choice = scanner.nextLine().trim();
+
+                        // =========================================================
+                        // SWITCH TO OTHER SERVER
+                        // =========================================================
+
+                        if (choice.equals("1")) {
+
+                                int targetPort;
+
+                                if (remoteServer.equals("SERVER1")) {
+
+                                        targetPort = PRIMARY_SERVER_PORT;
+
+                                } else {
+
+                                        targetPort = SECONDARY_SERVER_PORT;
+                                }
+
+                                System.out.println();
+
+                                System.out.println(
+                                                "Switching to "
+                                                                + remoteServer
+                                                                + "...");
+
+                                loadBalanceRedirecting = true;
+
+                                performLoadBalancedReconnect(
+                                                SERVER_ADDRESS,
+                                                targetPort);
+
+                                return false;
+                        }
+
+                        // =========================================================
+                        // USER CHOOSES TO STAY
+                        // =========================================================
+
+                        System.out.println();
+
+                        System.out.println(
+                                        "You chose to remain connected "
+                                                        + "to the current server.");
+
+                        System.out.println(
+                                        "=================================");
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println();
+                        System.out.println(
+                                        "Unable to check server load.");
+
+                        System.out.println(
+                                        "Reason: "
+                                                        + e.getMessage());
+
+                        return true;
+                }
+        }
+
+        // =========================================================
         // SETUP STREAMS
         // =========================================================
 
@@ -668,6 +1309,73 @@ public class ChatClient {
                                                 System.out.println(
                                                                 formatServerMessage(
                                                                                 serverMessage));
+
+                                                // =========================================================
+                                                // CONNECTION LOAD RESPONSE
+                                                // =========================================================
+
+                                                if (serverMessage.startsWith("CONNECTION_LOAD:")) {
+
+                                                        try {
+
+                                                                String[] parts = serverMessage.split(":", 5);
+
+                                                                if (parts.length < 5) {
+
+                                                                        System.out.println(
+                                                                                        "[LOAD CHECK] Invalid connection load response.");
+
+                                                                        continue;
+                                                                }
+
+                                                                String localServer = parts[1].trim();
+
+                                                                double localLoad = Double.parseDouble(parts[2].trim());
+
+                                                                String remoteServer = parts[3].trim();
+
+                                                                double remoteLoad = Double.parseDouble(parts[4].trim());
+
+                                                                System.out.println();
+                                                                System.out.println(
+                                                                                "==========================================");
+                                                                System.out.println(
+                                                                                "[LOAD CHECK] Server Load Status");
+                                                                System.out.println(
+                                                                                "==========================================");
+
+                                                                System.out.printf(
+                                                                                "%s Load : %.2f%n",
+                                                                                localServer,
+                                                                                localLoad);
+
+                                                                if (remoteLoad < 0) {
+
+                                                                        System.out.println(
+                                                                                        remoteServer + " Load : NOT AVAILABLE");
+
+                                                                } else {
+
+                                                                        System.out.printf(
+                                                                                        "%s Load : %.2f%n",
+                                                                                        remoteServer,
+                                                                                        remoteLoad);
+                                                                }
+
+                                                                System.out.println(
+                                                                                "==========================================");
+
+                                                                continue;
+
+                                                        } catch (Exception e) {
+
+                                                                System.out.println(
+                                                                                "[LOAD CHECK] Error reading load: "
+                                                                                                + e.getMessage());
+
+                                                                continue;
+                                                        }
+                                                }
 
                                                 // =================================================
                                                 // LOAD BALANCING REDIRECT
@@ -742,6 +1450,13 @@ public class ChatClient {
 
                                                         receiveDistributedFile(
                                                                         serverMessage);
+                                                }
+
+                                                if (serverMessage.startsWith("OFFLINE_FILE_READY:")) {
+
+                                                        receiveOfflineFile(serverMessage);
+
+                                                        return;
                                                 }
                                                 if (serverMessage.startsWith(
                                                                 "GROUP_FILE_DELIVERY_READY:")) {
@@ -1207,11 +1922,46 @@ public class ChatClient {
                         // SERVER AUTH REQUEST
                         // =================================================
 
-                        String request = serverInput.readLine();
+                        String request;
 
-                        if (request == null
-                                        || !request.equals(
-                                                        "AUTH_REQUEST")) {
+                        while (true) {
+
+                                request = serverInput.readLine();
+
+                                if (request == null) {
+
+                                        System.out.println(
+                                                        "Server disconnected during re-authentication.");
+
+                                        return false;
+                                }
+
+                                // Ignore initial server load message.
+                                if (request.startsWith("SERVER_LOAD:")) {
+
+                                        System.out.println(
+                                                        "[LOAD] " + request);
+
+                                        continue;
+                                }
+
+                                // Ignore other startup messages if received.
+                                if (request.startsWith("ONLINE_USERS:")) {
+
+                                        continue;
+                                }
+
+                                if (request.startsWith("GROUPS:")) {
+
+                                        continue;
+                                }
+
+                                // We received something other than a known
+                                // startup message, so process it below.
+                                break;
+                        }
+
+                        if (!request.equals("AUTH_REQUEST")) {
 
                                 System.out.println(
                                                 "Unexpected server response: "
@@ -1405,6 +2155,22 @@ public class ChatClient {
 
                                         return false;
                                 }
+
+                                // =================================================
+                                // IGNORE INITIAL SERVER LOAD MESSAGE
+                                // =================================================
+
+                                if (authRequest.startsWith("SERVER_LOAD:")) {
+
+                                        System.out.println(
+                                                        "[LOAD] " + authRequest);
+
+                                        continue;
+                                }
+
+                                // =================================================
+                                // AUTH REQUEST VALIDATION
+                                // =================================================
 
                                 if (!authRequest.equals(
                                                 "AUTH_REQUEST")) {
@@ -2080,6 +2846,342 @@ public class ChatClient {
                                                         + e.getMessage());
                 }
 
+        }
+
+        // =========================================================
+        // RECEIVE OFFLINE FILE
+        // =========================================================
+
+        private static void receiveOfflineFile(String message) {
+
+                try {
+
+                        /*
+                         * Format:
+                         *
+                         * OFFLINE_FILE_READY:
+                         * sender:
+                         * recipient:
+                         * fileName:
+                         * fileSize:
+                         * deliveryPort
+                         */
+
+                        String[] parts = message.split(":", 6);
+
+                        if (parts.length < 6) {
+
+                                System.out.println(
+                                                "[OFFLINE-FILE] Invalid delivery message.");
+
+                                return;
+                        }
+
+                        String sender = parts[1];
+
+                        String recipient = parts[2];
+
+                        String fileName = parts[3];
+
+                        long fileSize = Long.parseLong(parts[4]);
+
+                        int deliveryPort = Integer.parseInt(parts[5]);
+
+                        System.out.println();
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        "       OFFLINE FILE");
+
+                        System.out.println(
+                                        "=================================");
+
+                        System.out.println(
+                                        "From: " + sender);
+
+                        System.out.println(
+                                        "File: " + fileName);
+
+                        System.out.println(
+                                        "Size: " + fileSize + " bytes");
+
+                        System.out.println(
+                                        "Downloading...");
+
+                        // =====================================================
+                        // DOWNLOAD DIRECTORY
+                        // =====================================================
+
+                        File downloadDirectory = new File("downloads");
+
+                        if (!downloadDirectory.exists()) {
+
+                                downloadDirectory.mkdirs();
+                        }
+
+                        // =====================================================
+                        // CONNECT TO DELIVERY SERVER
+                        // =====================================================
+
+                        try (
+                                        Socket fileSocket = new Socket(
+                                                        SERVER_ADDRESS,
+                                                        deliveryPort);
+
+                                        DataInputStream input = new DataInputStream(
+                                                        fileSocket.getInputStream())) {
+
+                                // =================================================
+                                // RECEIVE ACTUAL FILE METADATA
+                                // =================================================
+
+                                String receivedFileName = input.readUTF();
+
+                                long receivedFileSize = input.readLong();
+
+                                System.out.println(
+                                                "Receiving: "
+                                                                + receivedFileName);
+
+                                System.out.println(
+                                                "Expected size: "
+                                                                + receivedFileSize
+                                                                + " bytes");
+
+                                File outputFile = new File(
+                                                downloadDirectory,
+                                                receivedFileName);
+
+                                // =================================================
+                                // RECEIVE FILE DATA
+                                // =================================================
+
+                                long totalReceived = 0;
+
+                                try (
+                                                FileOutputStream output = new FileOutputStream(
+                                                                outputFile)) {
+
+                                        byte[] buffer = new byte[8192];
+
+                                        while (totalReceived < receivedFileSize) {
+
+                                                int bytesRead = input.read(
+                                                                buffer,
+                                                                0,
+                                                                (int) Math.min(
+                                                                                buffer.length,
+                                                                                receivedFileSize
+                                                                                                - totalReceived));
+
+                                                if (bytesRead == -1) {
+                                                        break;
+                                                }
+
+                                                output.write(
+                                                                buffer,
+                                                                0,
+                                                                bytesRead);
+
+                                                totalReceived += bytesRead;
+                                        }
+                                }
+
+                                // =================================================
+                                // RESULT
+                                // =================================================
+
+                                if (totalReceived == receivedFileSize) {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "Offline file received successfully!");
+
+                                        System.out.println(
+                                                        "From: " + sender);
+
+                                        System.out.println(
+                                                        "Saved at: "
+                                                                        + outputFile
+                                                                                        .getAbsolutePath());
+
+                                        System.out.println(
+                                                        "Total bytes received: "
+                                                                        + totalReceived);
+
+                                } else {
+
+                                        System.out.println();
+                                        System.out.println(
+                                                        "Offline file transfer incomplete.");
+
+                                        System.out.println(
+                                                        "Expected: "
+                                                                        + receivedFileSize
+                                                                        + " bytes");
+
+                                        System.out.println(
+                                                        "Received: "
+                                                                        + totalReceived
+                                                                        + " bytes");
+                                }
+                        }
+
+                        System.out.println(
+                                        "=================================");
+
+                } catch (IOException e) {
+
+                        System.out.println();
+                        System.out.println(
+                                        "[OFFLINE-FILE] Unable to receive file.");
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Error: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // RECEIVE OFFLINE GROUP FILE
+        // =========================================================
+
+        private static void receiveOfflineGroupFile(
+                        String groupName,
+                        String sender,
+                        String fileName,
+                        long fileSize,
+                        int deliveryPort) {
+
+                File downloadDirectory = new File("downloads");
+
+                if (!downloadDirectory.exists()) {
+                        downloadDirectory.mkdirs();
+                }
+
+                File destinationFile = new File(
+                                downloadDirectory,
+                                fileName);
+
+                try (
+                                Socket fileSocket = new Socket(
+                                                SERVER_ADDRESS,
+                                                deliveryPort);
+
+                                DataInputStream inputStream = new DataInputStream(
+                                                fileSocket.getInputStream());
+
+                                FileOutputStream outputStream = new FileOutputStream(
+                                                destinationFile)) {
+
+                        // -------------------------------------------------
+                        // Read filename sent by server
+                        // -------------------------------------------------
+
+                        String receivedFileName = inputStream.readUTF();
+
+                        // -------------------------------------------------
+                        // Read file size
+                        // -------------------------------------------------
+
+                        long receivedFileSize = inputStream.readLong();
+
+                        // -------------------------------------------------
+                        // Receive file bytes
+                        // -------------------------------------------------
+
+                        byte[] buffer = new byte[8192];
+
+                        long totalReceived = 0;
+
+                        while (totalReceived < receivedFileSize) {
+
+                                int bytesToRead = (int) Math.min(
+                                                buffer.length,
+                                                receivedFileSize
+                                                                - totalReceived);
+
+                                int bytesRead = inputStream.read(
+                                                buffer,
+                                                0,
+                                                bytesToRead);
+
+                                if (bytesRead == -1) {
+                                        break;
+                                }
+
+                                outputStream.write(
+                                                buffer,
+                                                0,
+                                                bytesRead);
+
+                                totalReceived += bytesRead;
+                        }
+
+                        outputStream.flush();
+
+                        // -------------------------------------------------
+                        // Verify transfer
+                        // -------------------------------------------------
+
+                        if (totalReceived == receivedFileSize) {
+
+                                System.out.println();
+
+                                System.out.println(
+                                                "=================================");
+
+                                System.out.println(
+                                                "GROUP FILE RECEIVED");
+
+                                System.out.println(
+                                                "=================================");
+
+                                System.out.println(
+                                                "Group: "
+                                                                + groupName);
+
+                                System.out.println(
+                                                "Sender: "
+                                                                + sender);
+
+                                System.out.println(
+                                                "File: "
+                                                                + receivedFileName);
+
+                                System.out.println(
+                                                "Size: "
+                                                                + receivedFileSize
+                                                                + " bytes");
+
+                                System.out.println(
+                                                "Saved to: "
+                                                                + destinationFile
+                                                                                .getAbsolutePath());
+
+                                System.out.println(
+                                                "=================================");
+                        } else {
+
+                                System.out.println(
+                                                "SYSTEM: Group file transfer incomplete.");
+
+                                if (destinationFile.exists()) {
+                                        destinationFile.delete();
+                                }
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "SYSTEM: Unable to receive offline group file: "
+                                                        + e.getMessage());
+
+                        if (destinationFile.exists()) {
+                                destinationFile.delete();
+                        }
+                }
         }
 
         // =========================================================

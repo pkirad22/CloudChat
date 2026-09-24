@@ -5,6 +5,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 
 import database.MongoDBConnection;
+import service.OfflineGroupFileService;
+import service.OfflineGroupMessageService;
 
 public class ChatServer2 {
 
@@ -27,11 +29,24 @@ public class ChatServer2 {
 
                 MongoDBConnection.connect();
 
+                ChatServer.initializeOfflineServices();
                 // Initialize shared group persistence service
                 ChatServer.initializeGroupService();
 
                 // Load persisted groups and members from MongoDB
                 ChatServer.loadGroupsFromDatabase();
+
+                // =========================================================
+                // MONITORING API
+                // =========================================================
+
+                MonitoringApiServer monitoringApiServer = new MonitoringApiServer(
+                                8082,
+                                "SERVER_2",
+                                "SERVER_1",
+                                8081);
+
+                monitoringApiServer.start();
 
                 /*
                  * IMPORTANT:

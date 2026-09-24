@@ -1367,18 +1367,19 @@ public class ServerSynchronizer {
                         if (!hasLocalRecipients) {
 
                                 System.out.println(
-                                                "[GROUP-FILE-DIST] No local recipients "
+                                                "[GROUP-FILE-DIST] No local online recipients "
                                                                 + "for group "
                                                                 + groupName);
 
-                                send(
-                                                "FILE_GROUP_ROUTE_ACK:"
-                                                                + sender
-                                                                + ":"
-                                                                + groupName
-                                                                + ":FAILED");
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] File will be received "
+                                                                + "and checked for offline delivery.");
 
-                                return;
+                        } else {
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] Local online recipients: "
+                                                                + localRecipients);
                         }
 
                         String sourceServer = primaryServer
