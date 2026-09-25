@@ -1,0 +1,1078 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  background: #030b17;
+  color: #e7eefb;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* =========================================================
+   APP
+========================================================= */
+
+.cloudchat-app {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+
+  background:
+    linear-gradient(
+      rgba(3, 11, 23, 0.92),
+      rgba(3, 11, 23, 0.97)
+    ),
+    radial-gradient(
+      circle at 20% 55%,
+      rgba(37, 99, 235, 0.16),
+      transparent 35%
+    ),
+    radial-gradient(
+      circle at 85% 50%,
+      rgba(6, 182, 212, 0.11),
+      transparent 34%
+    );
+
+  background-color: #030b17;
+}
+
+/* Grid */
+.cloudchat-app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+
+  background-image:
+    linear-gradient(
+      rgba(148, 163, 184, 0.035) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.035) 1px,
+      transparent 1px
+    );
+
+  background-size: 46px 46px;
+  pointer-events: none;
+}
+
+/* =========================================================
+   GLOW
+========================================================= */
+
+.bg-glow {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(90px);
+}
+
+.bg-glow-left {
+  width: 480px;
+  height: 480px;
+  left: -220px;
+  top: 270px;
+
+  background: rgba(30, 64, 175, 0.26);
+}
+
+.bg-glow-right {
+  width: 450px;
+  height: 450px;
+  right: -180px;
+  top: 260px;
+
+  background: rgba(6, 182, 212, 0.12);
+}
+
+/* =========================================================
+   NAVBAR
+========================================================= */
+
+.navbar {
+  position: relative;
+  z-index: 5;
+
+  width: min(1040px, calc(100% - 48px));
+  margin: 0 auto;
+
+  height: 130px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-logo {
+  width: 56px;
+  height: 56px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 18px;
+
+  color: #22d3ee;
+
+  background:
+    linear-gradient(
+      145deg,
+      #061221,
+      #020915
+    );
+
+  border: 1px solid rgba(71, 85, 105, 0.25);
+
+  box-shadow:
+    0 15px 35px rgba(0, 0, 0, 0.3),
+    0 15px 35px rgba(6, 182, 212, 0.08);
+}
+
+.brand-name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.brand-subtitle {
+  margin-top: 3px;
+
+  font-size: 11px;
+  font-weight: 700;
+
+  letter-spacing: 2px;
+
+  color: #91a5c4;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 35px;
+}
+
+.nav-links a {
+  color: #91a5c4;
+  text-decoration: none;
+
+  font-size: 16px;
+  font-weight: 500;
+
+  transition: color 0.2s ease;
+}
+
+.nav-links a:hover {
+  color: #e2e8f0;
+}
+
+.nav-signin {
+  padding: 12px 22px;
+
+  border-radius: 28px;
+
+  color: #e2e8f0;
+
+  background: transparent;
+
+  border: 1px solid rgba(148, 163, 184, 0.25);
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.nav-signin:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+/* =========================================================
+   HERO
+========================================================= */
+
+.hero-section {
+  position: relative;
+  z-index: 2;
+
+  width: min(1040px, calc(100% - 48px));
+  margin: 25px auto 0;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 570px;
+
+  gap: 70px;
+
+  align-items: center;
+}
+
+/* =========================================================
+   HERO CONTENT
+========================================================= */
+
+.hero-content {
+  padding-bottom: 20px;
+}
+
+.status-pill {
+  width: fit-content;
+
+  display: flex;
+  align-items: center;
+  gap: 9px;
+
+  padding: 7px 14px;
+
+  border-radius: 999px;
+
+  color: #22d3ee;
+
+  background: rgba(8, 47, 73, 0.35);
+
+  border: 1px solid rgba(34, 211, 238, 0.45);
+
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-pill span {
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+
+  background: #22d3ee;
+
+  box-shadow:
+    0 0 12px rgba(34, 211, 238, 0.8);
+}
+
+.hero-content h1 {
+  margin: 38px 0 25px;
+
+  font-size: clamp(58px, 5vw, 82px);
+
+  line-height: 0.99;
+
+  letter-spacing: -4px;
+
+  font-weight: 800;
+
+  color: #e8eef9;
+}
+
+.hero-content h1 span {
+  color: #22d3ee;
+}
+
+.hero-description {
+  max-width: 690px;
+
+  margin: 0;
+
+  color: #91a5c4;
+
+  font-size: 19px;
+
+  line-height: 1.9;
+
+  font-weight: 500;
+}
+
+/* =========================================================
+   FEATURE CARDS
+========================================================= */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+
+  gap: 14px;
+
+  margin-top: 40px;
+}
+
+.feature-card {
+  min-height: 158px;
+
+  padding: 20px;
+
+  border-radius: 20px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(30, 41, 59, 0.88),
+      rgba(15, 23, 42, 0.8)
+    );
+
+  border: 1px solid rgba(148, 163, 184, 0.22);
+
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-3px);
+
+  border-color: rgba(34, 211, 238, 0.35);
+}
+
+.feature-icon {
+  color: #22d3ee;
+
+  margin-bottom: 18px;
+}
+
+.feature-card h3 {
+  margin: 0;
+
+  color: #dbe5f5;
+
+  font-size: 17px;
+}
+
+.feature-card p {
+  margin: 8px 0 0;
+
+  color: #91a5c4;
+
+  font-size: 15px;
+
+  line-height: 1.65;
+}
+
+/* =========================================================
+   AUTH CARD
+========================================================= */
+
+.auth-card {
+  padding: 36px;
+
+  border-radius: 28px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(38, 52, 69, 0.94),
+      rgba(19, 35, 49, 0.9)
+    );
+
+  border: 1px solid rgba(148, 163, 184, 0.25);
+
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.auth-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  margin-bottom: 28px;
+}
+
+.auth-header h2 {
+  margin: 0;
+
+  font-size: 27px;
+
+  letter-spacing: -0.5px;
+}
+
+.auth-header p {
+  margin: 7px 0 0;
+
+  color: #91a5c4;
+
+  font-size: 14px;
+}
+
+.auth-lock {
+  color: #22d3ee;
+
+  margin-top: 8px;
+
+  filter:
+    drop-shadow(
+      0 0 8px rgba(34, 211, 238, 0.3)
+    );
+}
+
+/* =========================================================
+   TABS
+========================================================= */
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+
+  padding: 5px;
+
+  margin-bottom: 30px;
+
+  border-radius: 17px;
+
+  background: #071522;
+}
+
+.auth-tab {
+  height: 51px;
+
+  border: none;
+
+  border-radius: 13px;
+
+  background: transparent;
+
+  color: #91a5c4;
+
+  font-weight: 700;
+
+  font-size: 16px;
+}
+
+.auth-tab.active {
+  color: #0f172a;
+
+  background: #e2e8f0;
+
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+/* =========================================================
+   FORM
+========================================================= */
+
+.form-group {
+  margin-bottom: 21px;
+}
+
+.form-group label {
+  display: block;
+
+  margin-bottom: 9px;
+
+  color: #9eb0ca;
+
+  font-size: 14px;
+
+  font-weight: 600;
+}
+
+.form-group input {
+  width: 100%;
+
+  height: 59px;
+
+  padding: 0 18px;
+
+  border-radius: 15px;
+
+  border: 1px solid rgba(148, 163, 184, 0.25);
+
+  outline: none;
+
+  background: rgba(6, 20, 32, 0.8);
+
+  color: #e2e8f0;
+
+  font-size: 16px;
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.form-group input::placeholder {
+  color: #64748b;
+}
+
+.form-group input:focus {
+  border-color: rgba(34, 211, 238, 0.55);
+
+  box-shadow:
+    0 0 0 3px rgba(34, 211, 238, 0.08);
+}
+
+.password-wrapper {
+  position: relative;
+}
+
+.password-wrapper input {
+  padding-right: 50px;
+}
+
+.password-wrapper svg {
+  position: absolute;
+
+  right: 18px;
+  top: 50%;
+
+  transform: translateY(-50%);
+
+  color: #91a5c4;
+}
+
+/* =========================================================
+   OPTIONS
+========================================================= */
+
+.form-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  margin: 7px 0 23px;
+}
+
+.remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  color: #91a5c4;
+
+  font-size: 13px;
+}
+
+.remember input {
+  accent-color: #22d3ee;
+}
+
+.forgot {
+  border: none;
+
+  background: none;
+
+  color: #22d3ee;
+
+  font-size: 13px;
+
+  font-weight: 600;
+}
+
+/* =========================================================
+   LOGIN BUTTON
+========================================================= */
+
+.login-button {
+  width: 100%;
+
+  height: 54px;
+
+  border: none;
+
+  border-radius: 16px;
+
+  color: #071522;
+
+  background:
+    linear-gradient(
+      90deg,
+      #1d9db8,
+      #22d3ee
+    );
+
+  font-weight: 800;
+
+  font-size: 15px;
+
+  box-shadow:
+    0 15px 35px rgba(34, 211, 238, 0.17);
+
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.login-button:hover {
+  transform: translateY(-1px);
+
+  box-shadow:
+    0 18px 40px rgba(34, 211, 238, 0.27);
+}
+
+/* =========================================================
+   FOOTER
+========================================================= */
+
+.footer {
+  position: relative;
+  z-index: 2;
+
+  width: min(1040px, calc(100% - 48px));
+
+  margin: 55px auto 0;
+
+  padding: 25px 0;
+
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+
+  color: #91a5c4;
+
+  font-size: 14px;
+}
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 1050px) {
+  .hero-section {
+    grid-template-columns: 1fr;
+    gap: 45px;
+  }
+
+  .auth-card {
+    max-width: 620px;
+  }
+
+  .hero-content h1 {
+    font-size: 68px;
+  }
+}
+
+@media (max-width: 700px) {
+  .navbar {
+    width: min(100% - 28px, 1040px);
+    height: 100px;
+  }
+
+  .nav-links a {
+    display: none;
+  }
+
+  .hero-section {
+    width: calc(100% - 28px);
+    margin-top: 20px;
+  }
+
+  .hero-content h1 {
+    font-size: 53px;
+    letter-spacing: -2.5px;
+  }
+
+  .hero-description {
+    font-size: 17px;
+  }
+
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-card {
+    padding: 25px;
+  }
+
+  .footer {
+    width: calc(100% - 28px);
+  }
+}
+
+/* =========================================================
+   AUTHENTICATION ADDITIONS
+========================================================= */
+
+.brand-button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.input-icon-wrapper {
+  position: relative;
+}
+
+.input-icon-wrapper svg {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64748b;
+  pointer-events: none;
+}
+
+.input-icon-wrapper input {
+  padding-left: 50px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 0;
+  top: 0;
+
+  width: 55px;
+  height: 100%;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: none;
+  background: transparent;
+
+  color: #91a5c4;
+}
+
+.password-toggle:hover {
+  color: #22d3ee;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  margin: 24px 0;
+
+  color: #64748b;
+
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.google-button {
+  width: 100%;
+  height: 54px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+
+  border-radius: 16px;
+
+  border: 1px solid rgba(148, 163, 184, 0.25);
+
+  background: rgba(6, 20, 32, 0.65);
+
+  color: #e2e8f0;
+
+  font-size: 15px;
+  font-weight: 700;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.google-button:hover {
+  background: rgba(15, 32, 48, 0.9);
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.google-icon {
+  width: 25px;
+  height: 25px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  background: white;
+
+  color: #4285f4;
+
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.admin-link {
+  display: block;
+
+  margin: 23px auto 0;
+
+  border: none;
+  background: transparent;
+
+  color: #64748b;
+
+  font-size: 13px;
+}
+
+.admin-link:hover {
+  color: #22d3ee;
+}
+
+.footer-admin {
+  margin-left: 20px;
+
+  border: none;
+  background: transparent;
+
+  color: #64748b;
+
+  font-size: 13px;
+}
+
+.footer-admin:hover {
+  color: #22d3ee;
+}
+
+/* =========================================================
+   OTP
+========================================================= */
+
+.back-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  margin-bottom: 28px;
+
+  border: none;
+  background: transparent;
+
+  color: #91a5c4;
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.back-button:hover {
+  color: #22d3ee;
+}
+
+.otp-icon {
+  width: 58px;
+  height: 58px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  margin-bottom: 18px;
+
+  border-radius: 17px;
+
+  color: #22d3ee;
+
+  background: rgba(8, 47, 73, 0.5);
+
+  border: 1px solid rgba(34, 211, 238, 0.25);
+}
+
+.otp-heading h2 {
+  margin: 0;
+
+  font-size: 28px;
+}
+
+.otp-heading p {
+  margin: 9px 0 27px;
+
+  color: #91a5c4;
+
+  line-height: 1.6;
+
+  font-size: 14px;
+}
+
+.otp-input {
+  text-align: center;
+
+  font-size: 25px !important;
+
+  font-weight: 800;
+
+  letter-spacing: 10px;
+
+  padding-left: 25px !important;
+}
+
+.login-button:disabled {
+  cursor: not-allowed;
+
+  opacity: 0.4;
+
+  transform: none;
+  box-shadow: none;
+}
+
+.otp-resend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+
+  margin-top: 20px;
+
+  color: #64748b;
+
+  font-size: 13px;
+}
+
+.otp-resend .forgot:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* =========================================================
+   ADMIN
+========================================================= */
+
+.admin-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  margin-bottom: 25px;
+}
+
+.admin-icon {
+  width: 55px;
+  height: 55px;
+
+  flex-shrink: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 17px;
+
+  color: #22d3ee;
+
+  background: rgba(8, 47, 73, 0.55);
+
+  border: 1px solid rgba(34, 211, 238, 0.25);
+}
+
+.admin-heading h2 {
+  margin: 0;
+  font-size: 27px;
+}
+
+.admin-heading p {
+  margin: 5px 0 0;
+
+  color: #91a5c4;
+
+  font-size: 13px;
+}
+
+.admin-warning {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+
+  margin-bottom: 25px;
+  padding: 13px 15px;
+
+  border-radius: 13px;
+
+  color: #91a5c4;
+
+  background: rgba(15, 23, 42, 0.6);
+
+  border: 1px solid rgba(148, 163, 184, 0.15);
+
+  font-size: 12px;
+}
+
+.admin-warning svg {
+  color: #22d3ee;
+  flex-shrink: 0;
+}
+
+.admin-login-button {
+  margin-top: 8px;
+}
+
+.admin-note {
+  margin: 19px 0 0;
+
+  text-align: center;
+
+  color: #64748b;
+
+  font-size: 12px;
+
+  line-height: 1.6;
+}
+
+.auth-page {
+  min-height: calc(100vh - 90px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 50px 24px;
+}
+
+.auth-page .auth-card {
+  width: min(100%, 470px);
+}
+
+.dashboard-placeholder {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+  padding: 30px;
+}
+
+.dashboard-placeholder h1 {
+  color: #e2e8f0;
+  font-size: 34px;
+}
+
+.dashboard-placeholder p {
+  color: #91a5c4;
+}
