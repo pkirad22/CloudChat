@@ -401,9 +401,27 @@ public class ChatServer {
                         String recipient,
                         String message) {
 
-                // -----------------------------------------------------
+                if (sender == null
+                                || recipient == null
+                                || message == null) {
+
+                        return false;
+                }
+
+                sender = sender.trim();
+                recipient = recipient.trim();
+                message = message.trim();
+
+                if (sender.isEmpty()
+                                || recipient.isEmpty()
+                                || message.isEmpty()) {
+
+                        return false;
+                }
+
+                // =====================================================
                 // CASE 1: LOCAL RECIPIENT
-                // -----------------------------------------------------
+                // =====================================================
 
                 ClientHandler recipientHandler = onlineUsers.get(recipient);
 
@@ -415,18 +433,29 @@ public class ChatServer {
                                                         + ": "
                                                         + message);
 
+                        System.out.println(
+                                        "[PRIVATE] Local delivery: "
+                                                        + sender
+                                                        + " -> "
+                                                        + recipient);
+
                         return true;
                 }
 
-                // -----------------------------------------------------
-                // CASE 2: REMOTE RECIPIENT
-                // -----------------------------------------------------
+                // =====================================================
+                // CASE 2: REMOTE SERVER
+                // =====================================================
+
+                /*
+                 * Do not depend on getRemoteOnlineUsers().
+                 *
+                 * If the other server is connected, route the message
+                 * there. The receiving server will check whether the
+                 * recipient is actually online.
+                 */
 
                 if (serverSynchronizer != null
-                                && serverSynchronizer.isConnected()
-                                && serverSynchronizer
-                                                .getRemoteOnlineUsers()
-                                                .contains(recipient)) {
+                                && serverSynchronizer.isConnected()) {
 
                         serverSynchronizer.send(
                                         "PRIVATE_ROUTE:"
@@ -446,9 +475,22 @@ public class ChatServer {
                         return true;
                 }
 
-                // -----------------------------------------------------
-                // CASE 3: RECIPIENT NOT FOUND
-                // -----------------------------------------------------
+                // =====================================================
+                // CASE 3: REMOTE SERVER UNAVAILABLE
+                // =====================================================
+
+                System.out.println(
+                                "[ROUTE] Remote server unavailable for "
+                                                + recipient
+                                                + ".");
+
+                /*
+                 * Return false.
+                 *
+                 * ClientHandler.handlePrivateMessage() will then use
+                 * OfflineMessageService and save the message in
+                 * MongoDB for later delivery.
+                 */
 
                 return false;
         }
@@ -462,31 +504,102 @@ public class ChatServer {
                         String recipient,
                         String message) {
 
-                ClientHandler recipientHandler = onlineUsers.get(recipient);
-
-                if (recipientHandler == null) {
-
-                        System.out.println(
-                                        "[ROUTE] Remote private message failed. "
-                                                        + recipient
-                                                        + " is not connected locally.");
+                if (sender == null
+                                || recipient == null
+                                || message == null) {
 
                         return false;
                 }
 
-                recipientHandler.sendMessage(
-                                "PRIVATE from "
-                                                + sender
-                                                + ": "
-                                                + message);
+                sender = sender.trim();
+                recipient = recipient.trim();
+                message = message.trim();
+
+                // =====================================================
+                // CASE 1: RECIPIENT ONLINE LOCALLY
+                // =====================================================
+
+                ClientHandler recipientHandler = onlineUsers.get(recipient);
+
+                if (recipientHandler != null) {
+
+                        recipientHandler.sendMessage(
+                                        "PRIVATE from "
+                                                        + sender
+                                                        + ": "
+                                                        + message);
+
+                        System.out.println(
+                                        "[ROUTE] Remote private message delivered: "
+                                                        + sender
+                                                        + " -> "
+                                                        + recipient);
+
+                        return true;
+                }
+
+                // =====================================================
+                // CASE 2: RECIPIENT OFFLINE
+                // =====================================================
 
                 System.out.println(
-                                "[ROUTE] Remote private message delivered: "
-                                                + sender
-                                                + " -> "
-                                                + recipient);
+                                "[ROUTE] "
+                                                + recipient
+                                                + " is not online locally.");
 
-                return true;
+                /*
+                 * Because both CloudChat servers use the same MongoDB,
+                 * we can queue the message here for offline delivery.
+                 */
+
+                try {
+
+                        service.UserService userService = new service.UserService();
+
+                        if (!userService.userExists(recipient)) {
+
+                                System.out.println(
+                                                "[ROUTE] User does not exist: "
+                                                                + recipient);
+
+                                return false;
+                        }
+
+                        service.OfflineMessageService offlineMessageService = new service.OfflineMessageService();
+
+                        boolean saved = offlineMessageService.savePendingMessage(
+                                        sender,
+                                        recipient,
+                                        message);
+
+                        if (saved) {
+
+                                System.out.println(
+                                                "[OFFLINE-MESSAGE] Remote recipient "
+                                                                + recipient
+                                                                + " is offline.");
+
+                                System.out.println(
+                                                "[OFFLINE-MESSAGE] Message queued "
+                                                                + "successfully.");
+
+                                return true;
+                        }
+
+                        System.out.println(
+                                        "[OFFLINE-MESSAGE] Failed to queue message "
+                                                        + "for "
+                                                        + recipient);
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-MESSAGE] Error while queuing "
+                                                        + "remote message: "
+                                                        + e.getMessage());
+                }
+
+                return false;
         }
 
         // =========================================================

@@ -3,6 +3,7 @@ package service;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,340 +21,370 @@ import database.MongoDBConnection;
 
 public class OfflineFileService {
 
-    private final MongoCollection<Document> offlineFiles;
+        private final MongoCollection<Document> offlineFiles;
 
-    private final GridFSBucket gridFSBucket;
+        private final GridFSBucket gridFSBucket;
 
-    public OfflineFileService() {
+        public OfflineFileService() {
 
-        offlineFiles = MongoDBConnection.getDatabase()
-                .getCollection("offline_files");
+                offlineFiles = MongoDBConnection.getDatabase()
+                                .getCollection("offline_files");
 
-        gridFSBucket = GridFSBuckets.create(
-                MongoDBConnection.getDatabase(),
-                "offline_file_storage");
-    }
-
-    // =========================================================
-    // SAVE PENDING FILE
-    // =========================================================
-
-    public boolean savePendingFile(
-            String sender,
-            String receiver,
-            File sourceFile) {
-
-        try {
-
-            if (sender == null
-                    || receiver == null
-                    || sourceFile == null) {
-
-                return false;
-            }
-
-            if (sender.trim().isEmpty()
-                    || receiver.trim().isEmpty()
-                    || !sourceFile.exists()
-                    || !sourceFile.isFile()) {
-
-                return false;
-            }
-
-            // -------------------------------------------------
-            // Upload actual file to MongoDB GridFS
-            // -------------------------------------------------
-
-            ObjectId gridFsFileId;
-
-            try (FileInputStream inputStream = new FileInputStream(sourceFile)) {
-
-                GridFSUploadOptions options = new GridFSUploadOptions()
-                        .metadata(
-                                new Document()
-                                        .append(
-                                                "sender",
-                                                sender.trim())
-                                        .append(
-                                                "receiver",
-                                                receiver.trim())
-                                        .append(
-                                                "originalFileName",
-                                                sourceFile.getName())
-                                        .append(
-                                                "fileType",
-                                                getFileExtension(
-                                                        sourceFile.getName())));
-
-                gridFsFileId = gridFSBucket.uploadFromStream(
-                        sourceFile.getName(),
-                        inputStream,
-                        options);
-            }
-
-            // -------------------------------------------------
-            // Save queue metadata
-            // -------------------------------------------------
-
-            Document document = new Document();
-
-            document.append(
-                    "sender",
-                    sender.trim());
-
-            document.append(
-                    "receiver",
-                    receiver.trim());
-
-            document.append(
-                    "fileName",
-                    sourceFile.getName());
-
-            document.append(
-                    "fileSize",
-                    sourceFile.length());
-
-            document.append(
-                    "fileType",
-                    getFileExtension(
-                            sourceFile.getName()));
-
-            document.append(
-                    "gridFsFileId",
-                    gridFsFileId);
-
-            document.append(
-                    "status",
-                    "PENDING");
-
-            document.append(
-                    "timestamp",
-                    LocalDateTime.now().toString());
-
-            offlineFiles.insertOne(document);
-
-            System.out.println(
-                    "[OFFLINE-FILE] Pending file saved: "
-                            + sender
-                            + " -> "
-                            + receiver
-                            + " | "
-                            + sourceFile.getName());
-
-            return true;
-
-        } catch (Exception e) {
-
-            System.out.println(
-                    "[OFFLINE-FILE] Failed to save file: "
-                            + e.getMessage());
-
-            return false;
+                gridFSBucket = GridFSBuckets.create(
+                                MongoDBConnection.getDatabase(),
+                                "offline_file_storage");
         }
-    }
 
-    // =========================================================
-    // GET PENDING FILES
-    // =========================================================
+        // =========================================================
+        // SAVE PENDING FILE
+        // =========================================================
 
-    public List<Document> getPendingFiles(
-            String receiver) {
+        public boolean savePendingFile(
+                        String sender,
+                        String receiver,
+                        File sourceFile) {
 
-        List<Document> files = new ArrayList<>();
+                try {
 
-        try {
+                        if (sender == null
+                                        || receiver == null
+                                        || sourceFile == null) {
 
-            if (receiver == null
-                    || receiver.trim().isEmpty()) {
+                                return false;
+                        }
+
+                        if (sender.trim().isEmpty()
+                                        || receiver.trim().isEmpty()
+                                        || !sourceFile.exists()
+                                        || !sourceFile.isFile()) {
+
+                                return false;
+                        }
+
+                        // -------------------------------------------------
+                        // Upload actual file to MongoDB GridFS
+                        // -------------------------------------------------
+
+                        ObjectId gridFsFileId;
+
+                        try (FileInputStream inputStream = new FileInputStream(sourceFile)) {
+
+                                GridFSUploadOptions options = new GridFSUploadOptions()
+                                                .metadata(
+                                                                new Document()
+                                                                                .append(
+                                                                                                "sender",
+                                                                                                sender.trim())
+                                                                                .append(
+                                                                                                "receiver",
+                                                                                                receiver.trim())
+                                                                                .append(
+                                                                                                "originalFileName",
+                                                                                                sourceFile.getName())
+                                                                                .append(
+                                                                                                "fileType",
+                                                                                                getFileExtension(
+                                                                                                                sourceFile.getName()))
+                                                                                .append(
+                                                                                                "originalFileSize",
+                                                                                                sourceFile.length()));
+
+                                gridFsFileId = gridFSBucket.uploadFromStream(
+                                                sourceFile.getName(),
+                                                inputStream,
+                                                options);
+                        }
+
+                        // -------------------------------------------------
+                        // Save queue metadata
+                        // -------------------------------------------------
+
+                        Document document = new Document()
+                                        .append(
+                                                        "sender",
+                                                        sender.trim())
+                                        .append(
+                                                        "receiver",
+                                                        receiver.trim())
+                                        .append(
+                                                        "fileName",
+                                                        sourceFile.getName())
+                                        .append(
+                                                        "fileSize",
+                                                        sourceFile.length())
+                                        .append(
+                                                        "fileType",
+                                                        getFileExtension(
+                                                                        sourceFile.getName()))
+                                        .append(
+                                                        "gridFsFileId",
+                                                        gridFsFileId)
+                                        .append(
+                                                        "status",
+                                                        "PENDING")
+                                        .append(
+                                                        "timestamp",
+                                                        LocalDateTime.now().toString());
+
+                        offlineFiles.insertOne(document);
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Pending file saved: "
+                                                        + sender
+                                                        + " -> "
+                                                        + receiver
+                                                        + " | "
+                                                        + sourceFile.getName()
+                                                        + " | GridFS ID: "
+                                                        + gridFsFileId);
+
+                        return true;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Failed to save file: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
+        }
+
+        // =========================================================
+        // GET PENDING FILES
+        // =========================================================
+
+        public List<Document> getPendingFiles(
+                        String receiver) {
+
+                List<Document> files = new ArrayList<>();
+
+                try {
+
+                        if (receiver == null
+                                        || receiver.trim().isEmpty()) {
+
+                                return files;
+                        }
+
+                        for (Document document : offlineFiles.find(
+                                        Filters.and(
+                                                        Filters.eq(
+                                                                        "receiver",
+                                                                        receiver.trim()),
+
+                                                        Filters.eq(
+                                                                        "status",
+                                                                        "PENDING")))) {
+
+                                files.add(document);
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Unable to retrieve pending files: "
+                                                        + e.getMessage());
+                }
 
                 return files;
-            }
-
-            for (Document document : offlineFiles.find(
-                    Filters.and(
-                            Filters.eq(
-                                    "receiver",
-                                    receiver.trim()),
-
-                            Filters.eq(
-                                    "status",
-                                    "PENDING")))) {
-
-                files.add(document);
-            }
-
-        } catch (Exception e) {
-
-            System.out.println(
-                    "[OFFLINE-FILE] Unable to retrieve pending files: "
-                            + e.getMessage());
         }
 
-        return files;
-    }
+        // =========================================================
+        // DOWNLOAD FILE FROM GRIDFS
+        // =========================================================
 
-    // =========================================================
-    // DOWNLOAD FILE FROM GRIDFS
-    // =========================================================
+        public boolean downloadFile(
+                        ObjectId gridFsFileId,
+                        File destinationFile) {
 
-    public boolean downloadFile(
-            ObjectId gridFsFileId,
-            File destinationFile) {
+                if (gridFsFileId == null
+                                || destinationFile == null) {
 
-        try {
+                        return false;
+                }
 
-            if (gridFsFileId == null
-                    || destinationFile == null) {
+                try (FileOutputStream outputStream = new FileOutputStream(destinationFile)) {
 
-                return false;
-            }
+                        gridFSBucket.downloadToStream(
+                                        gridFsFileId,
+                                        outputStream);
 
-            gridFSBucket.downloadToStream(
-                    gridFsFileId,
-                    new FileOutputStream(destinationFile));
+                        return true;
 
-            return true;
+                } catch (Exception e) {
 
-        } catch (Exception e) {
+                        System.out.println(
+                                        "[OFFLINE-FILE] Download failed: "
+                                                        + e.getMessage());
 
-            System.out.println(
-                    "[OFFLINE-FILE] Download failed: "
-                            + e.getMessage());
-
-            return false;
-        }
-    }
-
-    // =========================================================
-    // DOWNLOAD GRIDFS FILE TO OUTPUT STREAM
-    // =========================================================
-
-    public void downloadFileToStream(
-            ObjectId gridFsFileId,
-            java.io.OutputStream outputStream) {
-
-        if (gridFsFileId == null || outputStream == null) {
-            return;
+                        return false;
+                }
         }
 
-        try {
+        // =========================================================
+        // DOWNLOAD GRIDFS FILE TO OUTPUT STREAM
+        // =========================================================
 
-            gridFSBucket.downloadToStream(
-                    gridFsFileId,
-                    outputStream);
+        public boolean downloadFileToStream(
+                        ObjectId gridFsFileId,
+                        OutputStream outputStream) {
 
-        } catch (Exception e) {
+                if (gridFsFileId == null
+                                || outputStream == null) {
 
-            System.out.println(
-                    "[OFFLINE-FILE] Unable to stream file: "
-                            + e.getMessage());
+                        return false;
+                }
 
-            throw e;
-        }
-    }
+                try {
 
-    // =========================================================
-    // DELETE PENDING FILE
-    // =========================================================
+                        gridFSBucket.downloadToStream(
+                                        gridFsFileId,
+                                        outputStream);
 
-    public boolean deletePendingFile(
-            ObjectId queueId) {
+                        return true;
 
-        try {
+                } catch (Exception e) {
 
-            if (queueId == null) {
-                return false;
-            }
+                        System.out.println(
+                                        "[OFFLINE-FILE] Unable to stream file: "
+                                                        + e.getMessage());
 
-            Document document = offlineFiles.find(
-                    Filters.eq(
-                            "_id",
-                            queueId))
-                    .first();
-
-            if (document == null) {
-                return false;
-            }
-
-            ObjectId gridFsFileId = document.getObjectId(
-                    "gridFsFileId");
-
-            // -------------------------------------------------
-            // Delete metadata
-            // -------------------------------------------------
-
-            long deleted = offlineFiles.deleteOne(
-                    Filters.eq(
-                            "_id",
-                            queueId))
-                    .getDeletedCount();
-
-            // -------------------------------------------------
-            // Delete actual GridFS file
-            // -------------------------------------------------
-
-            if (deleted > 0
-                    && gridFsFileId != null) {
-
-                gridFSBucket.delete(
-                        gridFsFileId);
-
-                System.out.println(
-                        "[OFFLINE-FILE] File removed after delivery.");
-
-                return true;
-            }
-
-        } catch (Exception e) {
-
-            System.out.println(
-                    "[OFFLINE-FILE] Unable to remove pending file: "
-                            + e.getMessage());
+                        return false;
+                }
         }
 
-        return false;
-    }
+        // =========================================================
+        // DELETE PENDING FILE
+        // =========================================================
 
-    // =========================================================
-    // COUNT
-    // =========================================================
+        public boolean deletePendingFile(
+                        ObjectId queueId) {
 
-    public long getPendingFileCount(
-            String receiver) {
+                try {
 
-        try {
+                        if (queueId == null) {
+                                return false;
+                        }
 
-            return offlineFiles.countDocuments(
-                    Filters.and(
-                            Filters.eq(
-                                    "receiver",
-                                    receiver),
+                        Document document = offlineFiles.find(
+                                        Filters.eq(
+                                                        "_id",
+                                                        queueId))
+                                        .first();
 
-                            Filters.eq(
-                                    "status",
-                                    "PENDING")));
+                        if (document == null) {
+                                return false;
+                        }
 
-        } catch (Exception e) {
+                        ObjectId gridFsFileId = document.getObjectId(
+                                        "gridFsFileId");
 
-            return 0;
+                        // -------------------------------------------------
+                        // Delete queue metadata
+                        // -------------------------------------------------
+
+                        long deleted = offlineFiles.deleteOne(
+                                        Filters.eq(
+                                                        "_id",
+                                                        queueId))
+                                        .getDeletedCount();
+
+                        // -------------------------------------------------
+                        // Delete actual GridFS file
+                        // -------------------------------------------------
+
+                        if (deleted > 0
+                                        && gridFsFileId != null) {
+
+                                try {
+
+                                        gridFSBucket.delete(
+                                                        gridFsFileId);
+
+                                        System.out.println(
+                                                        "[OFFLINE-FILE] GridFS file deleted: "
+                                                                        + gridFsFileId);
+
+                                } catch (Exception gridFsException) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-FILE] Queue deleted but "
+                                                                        + "GridFS cleanup failed: "
+                                                                        + gridFsException.getMessage());
+                                }
+
+                                System.out.println(
+                                                "[OFFLINE-FILE] Pending file removed "
+                                                                + "after successful delivery.");
+
+                                return true;
+                        }
+
+                        return deleted > 0;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[OFFLINE-FILE] Unable to remove pending file: "
+                                                        + e.getMessage());
+
+                        return false;
+                }
         }
-    }
 
-    // =========================================================
-    // FILE EXTENSION
-    // =========================================================
+        // =========================================================
+        // COUNT
+        // =========================================================
 
-    private String getFileExtension(
-            String fileName) {
+        public long getPendingFileCount(
+                        String receiver) {
 
-        int index = fileName.lastIndexOf('.');
+                try {
 
-        if (index == -1) {
-            return "";
+                        if (receiver == null
+                                        || receiver.trim().isEmpty()) {
+
+                                return 0;
+                        }
+
+                        return offlineFiles.countDocuments(
+                                        Filters.and(
+                                                        Filters.eq(
+                                                                        "receiver",
+                                                                        receiver.trim()),
+
+                                                        Filters.eq(
+                                                                        "status",
+                                                                        "PENDING")));
+
+                } catch (Exception e) {
+
+                        return 0;
+                }
         }
 
-        return fileName
-                .substring(index + 1)
-                .toLowerCase();
-    }
+        // =========================================================
+        // FILE EXTENSION
+        // =========================================================
+
+        private String getFileExtension(
+                        String fileName) {
+
+                if (fileName == null
+                                || fileName.trim().isEmpty()) {
+
+                        return "";
+                }
+
+                int index = fileName.lastIndexOf('.');
+
+                if (index == -1) {
+                        return "";
+                }
+
+                return fileName
+                                .substring(index + 1)
+                                .toLowerCase();
+        }
 }

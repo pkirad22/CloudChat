@@ -5,9 +5,13 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 
 public class ApiServer {
 
@@ -18,6 +22,7 @@ public class ApiServer {
         private AuthApiHandler authApiHandler;
         private UserApiHandler userApiHandler;
         private GroupApiHandler groupApiHandler;
+        private MessageApiHandler messageApiHandler;
 
         public void start() throws IOException {
 
@@ -32,6 +37,7 @@ public class ApiServer {
                 authApiHandler = new AuthApiHandler();
                 userApiHandler = new UserApiHandler();
                 groupApiHandler = new GroupApiHandler();
+                messageApiHandler = new MessageApiHandler();
 
                 // =====================================================
                 // HEALTH CHECK
@@ -68,6 +74,18 @@ public class ApiServer {
                 server.createContext(
                                 "/api/users/online",
                                 withCors(userApiHandler::handleOnlineUsers));
+
+                server.createContext(
+                                "/api/users/search",
+                                withCors(userApiHandler::handleSearchUsers));
+
+                // =====================================================
+                // PRIVATE MESSAGE HISTORY
+                // =====================================================
+
+                server.createContext(
+                                "/api/messages/history",
+                                withCors(messageApiHandler::getPrivateChatHistory));
 
                 // =====================================================
                 // GROUPS
@@ -150,19 +168,32 @@ public class ApiServer {
                                                 groupApiHandler.handleGroupDetails(
                                                                 exchange);
                                         }
+
                                 }));
+
+                // =====================================================
+                // CHECK USERNAME
+                // =====================================================
 
                 server.createContext(
                                 "/api/auth/check-username",
                                 exchange -> {
+
                                         addCorsHeaders(exchange);
+
                                         authApiHandler.checkUsername(exchange);
                                 });
+
+                // =====================================================
+                // ONLINE USERS
+                // =====================================================
 
                 server.createContext(
                                 "/api/users/online",
                                 exchange -> {
+
                                         addCorsHeaders(exchange);
+
                                         userApiHandler.handleOnlineUsers(exchange);
                                 });
 
@@ -173,6 +204,22 @@ public class ApiServer {
                 server.createContext(
                                 "/api/groups/create",
                                 withCors(groupApiHandler::handleCreateGroup));
+
+                // =====================================================
+                // INTERNAL FILE DELIVERY
+                // =====================================================
+                //
+                // This endpoint is NOT for React.
+                //
+                // Server 1 / Server 2 can call this endpoint when they
+                // need the WebSocket Bridge JVM to deliver a file to
+                // a browser user.
+                //
+                // =====================================================
+
+                server.createContext(
+                                "/internal/files/deliver",
+                                this::handleInternalFileDelivery);
 
                 // =====================================================
                 // START SERVER
@@ -199,10 +246,245 @@ public class ApiServer {
                                                 + "/api/auth/login");
 
                 System.out.println(
+                                "[API] Internal file delivery endpoint: http://localhost:"
+                                                + PORT
+                                                + "/internal/files/deliver");
+
+                System.out.println(
                                 "[API] CORS enabled for React: http://localhost:5173");
 
                 System.out.println("==========================================");
                 System.out.println();
+        }
+
+        // =========================================================
+        // INTERNAL FILE DELIVERY
+        // =========================================================
+
+        private void handleInternalFileDelivery(
+                        HttpExchange exchange) {
+
+                try {
+
+                        // -------------------------------------------------
+                        // Only POST is allowed
+                        // -------------------------------------------------
+
+                        if (!exchange.getRequestMethod()
+                                        .equalsIgnoreCase("POST")) {
+
+                                sendResponse(
+                                                exchange,
+                                                405,
+                                                "{\"success\":false,\"message\":\"Method Not Allowed\"}");
+
+                                return;
+                        }
+
+                        // -------------------------------------------------
+                        // Security check
+                        // -------------------------------------------------
+                        //
+                        // This endpoint is intended only for local
+                        // Server 1 / Server 2 communication.
+                        //
+                        // -------------------------------------------------
+
+                        InetSocketAddress remoteAddress = exchange.getRemoteAddress();
+
+                        if (remoteAddress == null
+                                        || remoteAddress.getAddress() == null
+                                        || !remoteAddress.getAddress().isLoopbackAddress()) {
+
+                                System.out.println(
+                                                "[API-FILE] Rejected non-local request.");
+
+                                sendResponse(
+                                                exchange,
+                                                403,
+                                                "{\"success\":false,\"message\":\"Forbidden\"}");
+
+                                return;
+                        }
+
+                        // -------------------------------------------------
+                        // Read request body
+                        // -------------------------------------------------
+
+                        String requestBody;
+
+                        try (InputStream inputStream = exchange.getRequestBody()) {
+
+                                requestBody = new String(
+                                                inputStream.readAllBytes(),
+                                                StandardCharsets.UTF_8);
+                        }
+
+                        Map<String, String> params = parseFormData(requestBody);
+
+                        String recipient = params.get("recipient");
+
+                        String sender = params.get("sender");
+
+                        String filePath = params.get("filePath");
+
+                        // -------------------------------------------------
+                        // Validate parameters
+                        // -------------------------------------------------
+
+                        if (recipient == null
+                                        || recipient.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"Recipient is required\"}");
+
+                                return;
+                        }
+
+                        if (sender == null
+                                        || sender.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"Sender is required\"}");
+
+                                return;
+                        }
+
+                        if (filePath == null
+                                        || filePath.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"File path is required\"}");
+
+                                return;
+                        }
+
+                        System.out.println();
+                        System.out.println(
+                                        "[API-FILE] =====================================");
+
+                        System.out.println(
+                                        "[API-FILE] Internal file delivery request");
+
+                        System.out.println(
+                                        "[API-FILE] Sender: "
+                                                        + sender);
+
+                        System.out.println(
+                                        "[API-FILE] Recipient: "
+                                                        + recipient);
+
+                        System.out.println(
+                                        "[API-FILE] File: "
+                                                        + filePath);
+
+                        System.out.println(
+                                        "[API-FILE] =====================================");
+
+                        // -------------------------------------------------
+                        // Let the WebSocket Bridge deliver the file.
+                        //
+                        // IMPORTANT:
+                        // This code executes inside the API/WebSocket
+                        // Bridge JVM, so userSessions is available here.
+                        // -------------------------------------------------
+
+                        boolean delivered = WebSocketBridgeServer
+                                        .deliverFileFromInternalRequest(
+                                                        recipient,
+                                                        sender,
+                                                        filePath);
+
+                        if (delivered) {
+
+                                sendResponse(
+                                                exchange,
+                                                200,
+                                                "{\"success\":true,\"message\":\"File delivered\"}");
+
+                        } else {
+
+                                sendResponse(
+                                                exchange,
+                                                404,
+                                                "{\"success\":false,\"message\":\"Recipient WebSocket session not found or delivery failed\"}");
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[API-FILE] Internal delivery error: "
+                                                        + e.getMessage());
+
+                        e.printStackTrace();
+
+                        try {
+
+                                sendResponse(
+                                                exchange,
+                                                500,
+                                                "{\"success\":false,\"message\":\"Internal file delivery error\"}");
+
+                        } catch (Exception ignored) {
+                        }
+
+                } finally {
+
+                        try {
+                                exchange.close();
+                        } catch (Exception ignored) {
+                        }
+                }
+        }
+
+        // =========================================================
+        // PARSE FORM DATA
+        // =========================================================
+
+        private Map<String, String> parseFormData(
+                        String body) {
+
+                Map<String, String> result = new HashMap<>();
+
+                if (body == null
+                                || body.trim().isEmpty()) {
+
+                        return result;
+                }
+
+                String[] pairs = body.split("&");
+
+                for (String pair : pairs) {
+
+                        int separator = pair.indexOf('=');
+
+                        if (separator <= 0) {
+                                continue;
+                        }
+
+                        String key = URLDecoder.decode(
+                                        pair.substring(
+                                                        0,
+                                                        separator),
+                                        StandardCharsets.UTF_8);
+
+                        String value = URLDecoder.decode(
+                                        pair.substring(
+                                                        separator + 1),
+                                        StandardCharsets.UTF_8);
+
+                        result.put(
+                                        key,
+                                        value);
+                }
+
+                return result;
         }
 
         // =========================================================
@@ -290,7 +572,8 @@ public class ApiServer {
                 String response = "{"
                                 + "\"status\":\"ONLINE\","
                                 + "\"service\":\"CloudChat API Bridge\","
-                                + "\"port\":" + PORT
+                                + "\"port\":"
+                                + PORT
                                 + "}";
 
                 sendResponse(
@@ -322,7 +605,8 @@ public class ApiServer {
 
                 try (OutputStream outputStream = exchange.getResponseBody()) {
 
-                        outputStream.write(responseBytes);
+                        outputStream.write(
+                                        responseBytes);
                 }
         }
 }

@@ -7,6 +7,8 @@ import VerifyOTP from "./pages/VerifyOTP";
 import AdminLogin from "./pages/AdminLogin";
 import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./admin/AdminDashboard";
+import Chat from "./pages/Chat";
+import FileSharing from "./pages/FileSharing";
 
 function App() {
   return (
@@ -22,6 +24,8 @@ function App() {
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
 
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/file-sharing" element={<FileSharing />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

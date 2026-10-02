@@ -446,6 +446,9 @@ public class MonitoringApiServer {
 
                         boolean first = true;
 
+                        System.out.println(
+                                        "[MONITOR API] ChatServer online users: "
+                                                        + ChatServer.getOnlineUsers().keySet());
                         for (String username : ChatServer.getOnlineUsers().keySet()) {
 
                                 if (!first) {

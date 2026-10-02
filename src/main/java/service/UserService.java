@@ -110,6 +110,62 @@ public class UserService {
         }
 
         // =========================
+        // SEARCH USERS
+        // =========================
+
+        public java.util.List<String> searchUsers(String searchText) {
+
+                java.util.List<String> usernames = new java.util.ArrayList<>();
+
+                try {
+
+                        if (searchText == null
+                                        || searchText.trim().isEmpty()) {
+
+                                return usernames;
+                        }
+
+                        String search = searchText.trim();
+
+                        /*
+                         * Case-insensitive username search.
+                         *
+                         * Example:
+                         * "rah" -> Rahul
+                         * "AM" -> Amul
+                         */
+
+                        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                                        "^"
+                                                        + java.util.regex.Pattern
+                                                                        .quote(search),
+                                        java.util.regex.Pattern.CASE_INSENSITIVE);
+
+                        for (Document document : users.find(
+                                        new Document("username",
+                                                        pattern))) {
+
+                                String username = document.getString("username");
+
+                                if (username != null) {
+
+                                        usernames.add(username);
+                                }
+                        }
+
+                        return usernames;
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "User search failed: "
+                                                        + e.getMessage());
+
+                        return usernames;
+                }
+        }
+
+        // =========================
         // LOGIN USER
         // =========================
 

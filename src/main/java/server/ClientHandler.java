@@ -315,8 +315,6 @@ public class ClientHandler implements Runnable {
 
                                         deliverOfflineMessages();
 
-                                        deliverOfflineFiles();
-
                                         deliverOfflineGroupMessages();
 
                                         deliverOfflineGroupFiles();
@@ -682,6 +680,18 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
+                                if (message.equals("/deliverofflinefiles")) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-FILE] Browser is ready. "
+                                                                        + "Starting offline file delivery for "
+                                                                        + username);
+
+                                        deliverOfflineFiles();
+
+                                        continue;
+                                }
+
                                 // =================================================
                                 // PRIVATE MESSAGE
                                 // =================================================
@@ -930,10 +940,14 @@ public class ClientHandler implements Runnable {
                 if (recipientHandler != null) {
 
                         System.out.println(
-                                        "[FILE] Local transfer: "
+                                        "[FILE] Local browser transfer: "
                                                         + username
                                                         + " -> "
                                                         + recipient);
+
+                        // -------------------------------------------------
+                        // Notify recipient through existing backend
+                        // -------------------------------------------------
 
                         recipientHandler.sendMessage(
                                         "FILE_INCOMING: "
@@ -946,16 +960,48 @@ public class ClientHandler implements Runnable {
                                                         + file.length()
                                                         + " bytes");
 
-                        Thread fileTransferThread = new Thread(
-                                        new FileTransferServer(
-                                                        username,
-                                                        recipient,
-                                                        file));
+                        // -------------------------------------------------
+                        // Deliver actual file through WebSocket
+                        // -------------------------------------------------
+                        //
+                        // The React browser cannot connect to Java TCP
+                        // port 5001, so FileTransferServer is NOT used.
+                        //
+                        // -------------------------------------------------
 
-                        fileTransferThread.start();
+                        boolean delivered = api.WebSocketBridgeServer.sendFileToUser(
+                                        recipient,
+                                        username,
+                                        file,
+                                        file.getName());
 
-                        sendMessage(
-                                        "SYSTEM: File transfer started.");
+                        if (delivered) {
+
+                                sendMessage(
+                                                "SYSTEM: File transfer completed.");
+
+                                // -------------------------------------------------
+                                // The WebSocket transfer has consumed the temporary
+                                // file, so it can now be deleted.
+                                // -------------------------------------------------
+
+                                if (file.exists()) {
+
+                                        boolean deleted = file.delete();
+
+                                        System.out.println(
+                                                        "[FILE] Temporary browser file deleted: "
+                                                                        + deleted);
+                                }
+
+                        } else {
+
+                                sendMessage(
+                                                "SYSTEM: File transfer failed.");
+
+                                System.out.println(
+                                                "[FILE] WebSocket browser delivery failed.");
+                        }
 
                         return;
                 }
@@ -2669,88 +2715,35 @@ public class ClientHandler implements Runnable {
 
                         for (Document document : pendingFiles) {
 
+                                // 1. Read metadata from MongoDB document
                                 String sender = document.getString("sender");
-
                                 String fileName = document.getString("fileName");
-
                                 long fileSize = document.getLong("fileSize");
-
                                 org.bson.types.ObjectId gridFsFileId = document.getObjectId("gridFsFileId");
 
-                                // -------------------------------------------------
-                                // Create temporary delivery server
-                                // -------------------------------------------------
-
-                                ServerSocket deliveryServer = new ServerSocket(0);
-
-                                int deliveryPort = deliveryServer.getLocalPort();
-
-                                System.out.println(
-                                                "[OFFLINE-FILE] Delivery port ready: "
-                                                                + deliveryPort);
-
-                                // -------------------------------------------------
-                                // Tell client where to download the file
-                                // -------------------------------------------------
-
-                                sendMessage(
-                                                "OFFLINE_FILE_READY:"
-                                                                + sender
-                                                                + ":"
-                                                                + username
-                                                                + ":"
-                                                                + fileName
-                                                                + ":"
-                                                                + fileSize
-                                                                + ":"
-                                                                + deliveryPort);
-
-                                // -------------------------------------------------
-                                // Wait for client connection
-                                // -------------------------------------------------
-
-                                try (
-                                                Socket fileSocket = deliveryServer.accept();
-
-                                                DataOutputStream output = new DataOutputStream(
-                                                                fileSocket.getOutputStream())) {
-
-                                        System.out.println(
-                                                        "[OFFLINE-FILE] Client connected for: "
-                                                                        + fileName);
-
-                                        // -------------------------------------------------
-                                        // Send file metadata
-                                        // -------------------------------------------------
-
-                                        output.writeUTF(fileName);
-                                        output.writeLong(fileSize);
-
-                                        output.flush();
-
-                                        // -------------------------------------------------
-                                        // Download from GridFS directly into socket
-                                        // -------------------------------------------------
-
-                                        offlineFileService.downloadFileToStream(
-                                                        gridFsFileId,
-                                                        output);
-
-                                        output.flush();
-
-                                        System.out.println(
-                                                        "[OFFLINE-FILE] File delivered successfully: "
-                                                                        + fileName);
-
-                                        // -------------------------------------------------
-                                        // Remove queue entry + GridFS file
-                                        // -------------------------------------------------
-
-                                        offlineFileService.deletePendingFile(
-                                                        document.getObjectId("_id"));
+                                // 2. Extract GridFS data to a temporary file
+                                File tempFile = new File("temp_" + System.currentTimeMillis() + "_" + fileName);
+                                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile);
+                                                java.io.DataOutputStream dos = new java.io.DataOutputStream(fos)) {
+                                        offlineFileService.downloadFileToStream(gridFsFileId, dos);
                                 }
 
-                                deliveryServer.close();
+                                // 3. Notify the frontend exactly like a live transfer
+                                sendMessage("FILE_INCOMING: " + sender + " wants to send you " + fileName);
+                                sendMessage("FILE_INFO: " + fileSize + " bytes");
+
+                                // 4. Send via your existing WebSocket Bridge
+                                boolean delivered = api.WebSocketBridgeServer.sendFileToUser(username, sender,
+                                                tempFile, fileName);
+
+                                if (delivered) {
+                                        System.out.println("[OFFLINE-FILE] File delivered successfully: " + fileName);
+                                        offlineFileService.deletePendingFile(document.getObjectId("_id"));
+                                        tempFile.delete(); // Clean up temporary file
+                                } else {
+                                        System.out.println("[OFFLINE-FILE] WebSocket browser delivery failed for: "
+                                                        + fileName);
+                                }
                         }
 
                         sendMessage("OFFLINE_FILES_END");
@@ -3177,10 +3170,21 @@ public class ClientHandler implements Runnable {
 
         private void disconnect() {
 
+                System.out.println(
+                                "[DISCONNECT] ClientHandler disconnect called for: "
+                                                + username);
+
                 if (username != null) {
 
-                        ChatServer.removeOnlineUser(
-                                        username);
+                        System.out.println(
+                                        "[DISCONNECT] Removing user from online list: "
+                                                        + username);
+
+                        ChatServer.removeOnlineUser(username);
+
+                        System.out.println(
+                                        "[DISCONNECT] User removed: "
+                                                        + username);
 
                         ChatServer.broadcastMessage(
                                         "SYSTEM: "

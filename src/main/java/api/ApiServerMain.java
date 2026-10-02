@@ -9,7 +9,7 @@ public class ApiServerMain {
         try {
 
             // =================================================
-            // CONNECT TO MONGODB
+            // MONGODB
             // =================================================
 
             MongoDBConnection.connect();
@@ -18,12 +18,26 @@ public class ApiServerMain {
                     "[API] MongoDB connected.");
 
             // =================================================
-            // START API BRIDGE
+            // REST API
             // =================================================
 
             ApiServer apiServer = new ApiServer();
 
             apiServer.start();
+
+            System.out.println(
+                    "[API] REST API started on port 9000.");
+
+            // =================================================
+            // WEBSOCKET BRIDGE
+            // =================================================
+
+            WebSocketBridgeServer webSocketBridgeServer = new WebSocketBridgeServer(9001);
+
+            webSocketBridgeServer.start();
+
+            System.out.println(
+                    "[API] WebSocket Bridge starting on port 9001.");
 
         } catch (Exception e) {
 

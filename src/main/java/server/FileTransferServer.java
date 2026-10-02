@@ -111,6 +111,51 @@ public class FileTransferServer implements Runnable {
                         System.out.println(
                                         "File transfer error: "
                                                         + e.getMessage());
+
+                } finally {
+
+                        // ---------------------------------------------
+                        // DELETE TEMP FILE AFTER TRANSFER
+                        // ---------------------------------------------
+
+                        deleteTemporaryFile();
+                }
+        }
+
+        // =========================================================
+        // DELETE TEMPORARY FILE
+        // =========================================================
+
+        private void deleteTemporaryFile() {
+
+                if (file == null) {
+                        return;
+                }
+
+                if (!file.exists()) {
+                        return;
+                }
+
+                try {
+
+                        if (file.delete()) {
+
+                                System.out.println(
+                                                "[FILE] Temporary file deleted: "
+                                                                + file.getAbsolutePath());
+
+                        } else {
+
+                                System.out.println(
+                                                "[FILE] Unable to delete temporary file: "
+                                                                + file.getAbsolutePath());
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[FILE] Error deleting temporary file: "
+                                                        + e.getMessage());
                 }
         }
 
@@ -125,23 +170,24 @@ public class FileTransferServer implements Runnable {
 
                         FileTransferHistory history = new FileTransferHistory(
 
-                                        sender, // sender
-                                        recipient, // recipient
-                                        null, // groupName
-                                        null, // recipients
+                                        sender,
+                                        recipient,
 
-                                        file.getName(), // fileName
-                                        totalSent, // fileSize
-                                        getFileType(file), // fileType
+                                        null,
+                                        null,
 
-                                        "LOCAL_PRIVATE", // transferType
+                                        file.getName(),
+                                        totalSent,
+                                        getFileType(file),
 
-                                        "LOCAL", // sourceServer
-                                        "LOCAL", // destinationServer
+                                        "LOCAL_PRIVATE",
 
-                                        "SUCCESS", // status
+                                        "LOCAL",
+                                        "LOCAL",
 
-                                        LocalDateTime.now()); // timestamp
+                                        "SUCCESS",
+
+                                        LocalDateTime.now());
 
                         FileTransferHistoryService historyService = new FileTransferHistoryService();
 

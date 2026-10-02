@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Eye, EyeOff, LockKeyhole, UserRound } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { loginUser } from "../services/api";
+import { connectChat } from "../services/chatSocket";
 
 function Login() {
   const navigate = useNavigate();
@@ -25,21 +26,15 @@ function Login() {
     }
 
     try {
-      setLoading(true);
+      const data = await loginUser(username.trim(), password);
 
-      const result = await loginUser(username.trim(), password);
+      sessionStorage.setItem("cloudchat_username", data.username);
 
-      console.log("Login successful:", result);
+      await connectChat(username.trim(), password);
 
-      // Store logged-in username for the frontend session
-      sessionStorage.setItem("cloudchat_username", result.username);
-
-      // Redirect after successful login
       navigate("/dashboard");
-    } catch (error) {
-      console.error("Login failed:", error);
-
-      setError(error.message || "Invalid username or password.");
+    } catch (err) {
+      setError(err.message || "Login failed");
     } finally {
       setLoading(false);
     }

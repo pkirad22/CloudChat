@@ -89,6 +89,36 @@ export async function getOnlineUsers() {
   return data;
 }
 
+export async function searchUsers(searchText) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/users/search?username=${encodeURIComponent(searchText)}`,
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.message || "Unable to search users");
+  }
+
+  return data;
+}
+
 export async function getGroups() {
   return request("/groups");
+}
+
+export async function getPrivateMessageHistory(username, otherUser) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/messages/history?username=${encodeURIComponent(
+      username,
+    )}&with=${encodeURIComponent(otherUser)}`,
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.message || "Unable to load message history");
+  }
+
+  return data;
 }

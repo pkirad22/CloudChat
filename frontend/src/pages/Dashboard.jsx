@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Activity,
+  File,
   LogOut,
   RefreshCw,
   Server,
@@ -9,6 +10,7 @@ import {
   Users,
 } from "lucide-react";
 import { getOnlineUsers } from "../services/api";
+import { disconnectChat } from "../services/chatSocket";
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -104,6 +106,7 @@ function Dashboard() {
   // =========================================================
 
   const handleLogout = () => {
+    disconnectChat();
     sessionStorage.removeItem("cloudchat_username");
 
     navigate("/login", { replace: true });
@@ -536,15 +539,34 @@ function Dashboard() {
         >
           <div
             className="auth-card"
+            onClick={() => navigate("/chat")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate("/chat");
+              }
+            }}
             style={{
               padding: "20px",
               minHeight: "auto",
+              cursor: "pointer",
+              transition: "transform 0.2s ease, border-color 0.2s ease",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.transform = "translateY(-2px)";
+              event.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.transform = "translateY(0)";
+              event.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
             }}
           >
             <h3 style={{ marginTop: 0 }}>Private Chat</h3>
 
             <p style={{ opacity: 0.65 }}>
-              Real-time private messaging will be connected through WebSocket.
+              Real-time private messaging through WebSocket.
             </p>
           </div>
 
@@ -564,15 +586,45 @@ function Dashboard() {
 
           <div
             className="auth-card"
+            onClick={() => navigate("/file-sharing")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate("/file-sharing");
+              }
+            }}
             style={{
               padding: "20px",
               minHeight: "auto",
+              cursor: "pointer",
+              transition: "transform 0.2s ease, border-color 0.2s ease",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.transform = "translateY(-2px)";
+              event.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.transform = "translateY(0)";
+              event.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
             }}
           >
-            <h3 style={{ marginTop: 0 }}>File Sharing</h3>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "10px",
+              }}
+            >
+              <h3 style={{ margin: 0 }}>File Sharing</h3>
+
+              <File size={22} />
+            </div>
 
             <p style={{ opacity: 0.65 }}>
-              Private and group file sharing will be connected next.
+              Send, receive and manage files across the CloudChat cluster.
             </p>
           </div>
         </section>
