@@ -5,7 +5,11 @@ import {
   closeWebSocket,
 } from "./websocket";
 
-import { saveReceivedFile, getStoredFilesForUser } from "./receivedFileStore";
+import {
+  saveReceivedFile,
+  getStoredFilesForUser,
+  getStoredGroupFilesForUser,
+} from "./receivedFileStore";
 
 const WS_URL = "ws://localhost:9001";
 
@@ -34,6 +38,14 @@ let pendingFiles = [];
 const MAX_PENDING_FILES = 100;
 
 // =========================================================
+// PENDING GROUP FILE QUEUE
+// =========================================================
+
+let pendingGroupFiles = [];
+
+const MAX_PENDING_GROUP_FILES = 100;
+
+// =========================================================
 // FILE UPLOAD STATE
 // =========================================================
 
@@ -43,26 +55,29 @@ let fileUploadInProgress = false;
 let activeFileUpload = null;
 
 // =========================================================
-// INCOMING FILE STATE
+// GROUP FILE UPLOAD STATE
 // =========================================================
 
-// Incoming browser file transfer.
-//
-// The backend sends:
-//
-// 1. FILE_INCOMING: sender wants to send you filename
-// 2. FILE_INFO: 12345 bytes
-// 3. file_delivery_started JSON
-// 4. Binary WebSocket chunks
-// 5. file_delivery_complete JSON
-//
-// The important metadata for binary reception comes from
-// file_delivery_started.
+let groupFileUploadInProgress = false;
+
+let activeGroupFileUpload = null;
+
+// =========================================================
+// INCOMING PRIVATE FILE STATE
+// =========================================================
 
 let incomingFile = null;
 
-// Maximum incoming file size.
-// Keep this consistent with backend validation.
+// =========================================================
+// INCOMING GROUP FILE STATE
+// =========================================================
+
+let incomingGroupFile = null;
+
+// =========================================================
+// MAXIMUM FILE SIZE
+// =========================================================
+
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 // =========================================================
@@ -71,6 +86,7 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 export function connectChat(username, password) {
   currentChatUsername = username || "";
+
   return new Promise((resolve, reject) => {
     // -------------------------------------------------------
     // Reuse existing connection
@@ -84,6 +100,7 @@ export function connectChat(username, password) {
     // -------------------------------------------------------
     // Create WebSocket
     // -------------------------------------------------------
+
     socket = createWebSocket(WS_URL);
 
     // -------------------------------------------------------
@@ -112,15 +129,23 @@ export function connectChat(username, password) {
       // =====================================================
 
       if (event.data instanceof ArrayBuffer) {
-        handleIncomingBinaryFile(event.data);
+        if (incomingGroupFile) {
+          handleIncomingGroupFileBinary(event.data);
+        } else {
+          handleIncomingBinaryFile(event.data);
+        }
 
         return;
       }
 
-      // Some browsers/WebSocket implementations may provide
-      // binary data as a Blob even when binaryType is set.
+      // Some browsers/WebSocket implementations
+      // may provide binary data as Blob.
       if (event.data instanceof Blob) {
-        handleIncomingBlobFile(event.data);
+        if (incomingGroupFile) {
+          handleIncomingGroupFileBlob(event.data);
+        } else {
+          handleIncomingBlobFile(event.data);
+        }
 
         return;
       }
@@ -134,17 +159,17 @@ export function connectChat(username, password) {
       console.log("[CHAT WS] Backend:", rawData);
 
       // -----------------------------------------------------
-      // FILE INCOMING METADATA
+      // PRIVATE FILE INCOMING METADATA
       // -----------------------------------------------------
 
       if (rawData.startsWith("FILE_INCOMING:")) {
         handleIncomingFileNotification(rawData);
 
-        // Also send this to React so the Chat page can
-        // display the normal incoming-file message.
         dispatchMessage({
           type: "file_incoming",
+
           message: rawData,
+
           rawMessage: rawData,
         });
 
@@ -152,16 +177,17 @@ export function connectChat(username, password) {
       }
 
       // -----------------------------------------------------
-      // FILE INFORMATION
+      // PRIVATE FILE INFORMATION
       // -----------------------------------------------------
 
       if (rawData.startsWith("FILE_INFO:")) {
         handleIncomingFileInfo(rawData);
 
-        // Also send to React.
         dispatchMessage({
           type: "file_info",
+
           message: rawData,
+
           rawMessage: rawData,
         });
 
@@ -188,21 +214,7 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
-      // FILE DELIVERY STARTED
-      //
-      // THIS IS THE IMPORTANT FIX.
-      //
-      // The WebSocket bridge sends this immediately before
-      // sending the binary file chunks.
-      //
-      // Example:
-      //
-      // {
-      //   "type": "file_delivery_started",
-      //   "sender": "Pranav",
-      //   "fileName": "example.pdf",
-      //   "fileSize": 992252
-      // }
+      // PRIVATE FILE DELIVERY STARTED
       // =====================================================
 
       if (data.type === "file_delivery_started") {
@@ -212,7 +224,7 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
-      // FILE DELIVERY COMPLETE
+      // PRIVATE FILE DELIVERY COMPLETE
       // =====================================================
 
       if (data.type === "file_delivery_complete") {
@@ -222,7 +234,7 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
-      // FILE DELIVERY ERROR
+      // PRIVATE FILE DELIVERY ERROR
       // =====================================================
 
       if (data.type === "file_delivery_error") {
@@ -230,8 +242,11 @@ export function connectChat(username, password) {
 
         dispatchMessage({
           type: "file_receive_error",
+
           sender: data.sender || "Unknown",
+
           fileName: data.fileName || "received-file",
+
           message: data.message || "Incoming file delivery failed.",
         });
 
@@ -241,11 +256,54 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
-      // FILE UPLOAD EVENTS
-      //
-      // These are handled BEFORE normal React message
-      // handlers so they cannot accidentally become chat
-      // messages.
+      // GROUP FILE DELIVERY STARTED
+      // =====================================================
+
+      if (data.type === "group_file_delivery_started") {
+        handleIncomingGroupFileDeliveryStarted(data);
+
+        return;
+      }
+
+      // =====================================================
+      // GROUP FILE DELIVERY COMPLETE
+      // =====================================================
+
+      if (data.type === "group_file_delivery_complete") {
+        handleIncomingGroupFileDeliveryComplete(data);
+
+        return;
+      }
+
+      // =====================================================
+      // GROUP FILE DELIVERY ERROR
+      // =====================================================
+
+      if (data.type === "group_file_delivery_error") {
+        console.error(
+          "[CHAT GROUP FILE] Group file delivery error:",
+          data.message,
+        );
+
+        dispatchMessage({
+          type: "group_file_receive_error",
+
+          sender: data.sender || "Unknown",
+
+          groupName: data.groupName || "",
+
+          fileName: data.fileName || "received-file",
+
+          message: data.message || "Group file delivery failed.",
+        });
+
+        resetIncomingGroupFile();
+
+        return;
+      }
+
+      // =====================================================
+      // PRIVATE FILE UPLOAD STARTED
       // =====================================================
 
       if (data.type === "file_upload_started") {
@@ -290,7 +348,7 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
-      // FILE UPLOAD COMPLETE
+      // PRIVATE FILE UPLOAD COMPLETE
       // =====================================================
 
       if (data.type === "file_upload_complete") {
@@ -300,28 +358,34 @@ export function connectChat(username, password) {
           console.warn(
             "[CHAT WS] Received file_upload_complete without active upload.",
           );
+
           return;
         }
 
         const upload = activeFileUpload;
 
         activeFileUpload = null;
+
         fileUploadInProgress = false;
 
         if (typeof upload.onProgress === "function") {
           upload.onProgress(100, upload.file.size, upload.file.size);
         }
 
-        // Save the sent file permanently in IndexedDB.
+        // Save sent file permanently.
         saveReceivedFile({
           sender: currentChatUsername,
+
           recipient: upload.recipient,
 
           owner: currentChatUsername,
+
           direction: "sent",
 
           fileName: upload.file.name,
+
           fileSize: upload.file.size,
+
           fileType: upload.file.type || "application/octet-stream",
 
           blob: upload.file,
@@ -339,16 +403,21 @@ export function connectChat(username, password) {
               ...data,
 
               fileId: storedFile.id,
+
               fileName: storedFile.fileName,
+
               fileSize: storedFile.fileSize,
+
               fileType: storedFile.fileType,
 
               sender: currentChatUsername,
+
               recipient: upload.recipient,
 
               conversationUser: upload.recipient,
 
               own: true,
+
               persisted: true,
             };
 
@@ -360,19 +429,17 @@ export function connectChat(username, password) {
               error,
             );
 
-            /*
-             * The server upload itself succeeded.
-             * Resolve the upload even if IndexedDB persistence fails.
-             */
             upload.resolve({
               ...data,
 
               sender: currentChatUsername,
+
               recipient: upload.recipient,
 
               conversationUser: upload.recipient,
 
               own: true,
+
               persisted: false,
 
               persistenceError:
@@ -384,7 +451,7 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
-      // FILE UPLOAD ERROR
+      // PRIVATE FILE UPLOAD ERROR
       // =====================================================
 
       if (data.type === "file_upload_error") {
@@ -406,6 +473,117 @@ export function connectChat(username, password) {
       }
 
       // =====================================================
+      // GROUP FILE UPLOAD STARTED
+      // =====================================================
+
+      if (data.type === "group_file_upload_started") {
+        console.log("[CHAT GROUP FILE] Upload started:", data);
+
+        if (!activeGroupFileUpload) {
+          console.warn(
+            "[CHAT GROUP FILE] Received group_file_upload_started without active upload.",
+          );
+
+          return;
+        }
+
+        if (activeGroupFileUpload.started) {
+          console.warn(
+            "[CHAT GROUP FILE] Duplicate group_file_upload_started received.",
+          );
+
+          return;
+        }
+
+        activeGroupFileUpload.started = true;
+
+        uploadGroupFileChunks(
+          activeGroupFileUpload.file,
+          activeGroupFileUpload.onProgress,
+        ).catch((error) => {
+          console.error("[CHAT GROUP FILE] Binary upload failed:", error);
+
+          if (!activeGroupFileUpload) {
+            return;
+          }
+
+          const upload = activeGroupFileUpload;
+
+          activeGroupFileUpload = null;
+
+          groupFileUploadInProgress = false;
+
+          upload.reject(error);
+        });
+
+        return;
+      }
+
+      // =====================================================
+      // GROUP FILE UPLOAD COMPLETE
+      // =====================================================
+
+      if (data.type === "group_file_upload_complete") {
+        console.log("[CHAT GROUP FILE] Upload completed:", data);
+
+        if (!activeGroupFileUpload) {
+          console.warn(
+            "[CHAT GROUP FILE] Received group_file_upload_complete without active upload.",
+          );
+
+          return;
+        }
+
+        const upload = activeGroupFileUpload;
+
+        activeGroupFileUpload = null;
+
+        groupFileUploadInProgress = false;
+
+        if (typeof upload.onProgress === "function") {
+          upload.onProgress(100, upload.file.size, upload.file.size);
+        }
+
+        upload.resolve({
+          ...data,
+
+          groupName: upload.groupName,
+
+          fileName: upload.file.name,
+
+          fileSize: upload.file.size,
+
+          sender: currentChatUsername,
+
+          own: true,
+        });
+
+        return;
+      }
+
+      // =====================================================
+      // GROUP FILE UPLOAD ERROR
+      // =====================================================
+
+      if (data.type === "group_file_upload_error") {
+        console.error("[CHAT GROUP FILE] Upload error:", data.message);
+
+        if (!activeGroupFileUpload) {
+          return;
+        }
+
+        const upload = activeGroupFileUpload;
+
+        activeGroupFileUpload = null;
+
+        groupFileUploadInProgress = false;
+
+        upload.reject(new Error(data.message || "Group file upload failed."));
+
+        return;
+      }
+
+      // =====================================================
       // LOGIN SUCCESS
       // =====================================================
 
@@ -420,7 +598,6 @@ export function connectChat(username, password) {
           }
         });
 
-        // Notify normal React message subscribers too.
         dispatchMessage(data);
 
         resolve(socket);
@@ -496,7 +673,10 @@ export function connectChat(username, password) {
 
       socket = null;
 
-      // Reject active upload.
+      // -----------------------------------------------------
+      // Reject private upload
+      // -----------------------------------------------------
+
       if (activeFileUpload) {
         const upload = activeFileUpload;
 
@@ -507,8 +687,33 @@ export function connectChat(username, password) {
         upload.reject(new Error("Chat connection closed during file upload."));
       }
 
-      // Reset incomplete incoming file.
+      // -----------------------------------------------------
+      // Reject group upload
+      // -----------------------------------------------------
+
+      if (activeGroupFileUpload) {
+        const upload = activeGroupFileUpload;
+
+        activeGroupFileUpload = null;
+
+        groupFileUploadInProgress = false;
+
+        upload.reject(
+          new Error("Chat connection closed during group file upload."),
+        );
+      }
+
+      // -----------------------------------------------------
+      // Reset incomplete transfers
+      // -----------------------------------------------------
+
       resetIncomingFile();
+
+      resetIncomingGroupFile();
+
+      // -----------------------------------------------------
+      // Close handlers
+      // -----------------------------------------------------
 
       closeHandlers.forEach((handler) => {
         try {
@@ -522,14 +727,10 @@ export function connectChat(username, password) {
 }
 
 // =========================================================
-// INCOMING FILE NOTIFICATION
+// INCOMING PRIVATE FILE NOTIFICATION
 // =========================================================
 
 function handleIncomingFileNotification(message) {
-  // Expected format:
-  //
-  // FILE_INCOMING: Pranav wants to send you filename.pdf
-
   const prefix = "FILE_INCOMING:";
 
   const content = message.substring(prefix.length).trim();
@@ -541,10 +742,6 @@ function handleIncomingFileNotification(message) {
   }
 
   console.log("[CHAT FILE] Incoming file notification:", content);
-
-  // -------------------------------------------------------
-  // Extract sender and filename
-  // -------------------------------------------------------
 
   const wantsToSend = " wants to send you ";
 
@@ -559,10 +756,6 @@ function handleIncomingFileNotification(message) {
 
     fileName = content.substring(separatorIndex + wantsToSend.length).trim();
   }
-
-  // -------------------------------------------------------
-  // Start a new incoming file
-  // -------------------------------------------------------
 
   if (incomingFile) {
     console.warn(
@@ -590,14 +783,10 @@ function handleIncomingFileNotification(message) {
 }
 
 // =========================================================
-// INCOMING FILE INFORMATION
+// INCOMING PRIVATE FILE INFORMATION
 // =========================================================
 
 function handleIncomingFileInfo(message) {
-  // Expected:
-  //
-  // FILE_INFO: 992252 bytes
-
   const prefix = "FILE_INFO:";
 
   const content = message.substring(prefix.length).trim();
@@ -608,7 +797,6 @@ function handleIncomingFileInfo(message) {
     return;
   }
 
-  // Extract first number from the message.
   const match = content.match(/\d+/);
 
   if (!match) {
@@ -642,10 +830,6 @@ function handleIncomingFileInfo(message) {
     return;
   }
 
-  // -------------------------------------------------------
-  // If FILE_INFO arrived before FILE_INCOMING
-  // -------------------------------------------------------
-
   if (!incomingFile) {
     incomingFile = {
       sender: "Unknown",
@@ -668,23 +852,7 @@ function handleIncomingFileInfo(message) {
 }
 
 // =========================================================
-// FILE DELIVERY STARTED
-// =========================================================
-//
-// This is the actual metadata event that arrives immediately
-// before the binary WebSocket chunks.
-//
-// Example:
-//
-// {
-//   "type": "file_delivery_started",
-//   "sender": "Pranav",
-//   "fileName": "example.pdf",
-//   "fileSize": 992252
-// }
-//
-// This function initializes incomingFile so that the next
-// ArrayBuffer chunks can be accepted.
+// PRIVATE FILE DELIVERY STARTED
 // =========================================================
 
 function handleIncomingFileDeliveryStarted(data) {
@@ -701,10 +869,6 @@ function handleIncomingFileDeliveryStarted(data) {
       : "received-file";
 
   const fileSize = Number(data.fileSize);
-
-  // -------------------------------------------------------
-  // Validate file size
-  // -------------------------------------------------------
 
   if (!Number.isFinite(fileSize) || fileSize <= 0) {
     console.error(
@@ -745,19 +909,11 @@ function handleIncomingFileDeliveryStarted(data) {
     return;
   }
 
-  // -------------------------------------------------------
-  // Reset previous incomplete transfer
-  // -------------------------------------------------------
-
   if (incomingFile) {
     console.warn("[CHAT FILE] Replacing previous incoming file state.");
 
     resetIncomingFile();
   }
-
-  // -------------------------------------------------------
-  // Create incoming file state
-  // -------------------------------------------------------
 
   incomingFile = {
     sender,
@@ -781,10 +937,6 @@ function handleIncomingFileDeliveryStarted(data) {
     expectedSize: incomingFile.expectedSize,
   });
 
-  // -------------------------------------------------------
-  // Notify React
-  // -------------------------------------------------------
-
   dispatchMessage({
     type: "file_receive_started",
 
@@ -801,17 +953,11 @@ function handleIncomingFileDeliveryStarted(data) {
 }
 
 // =========================================================
-// FILE DELIVERY COMPLETE
+// PRIVATE FILE DELIVERY COMPLETE
 // =========================================================
 
 function handleIncomingFileDeliveryComplete(data) {
   console.log("[CHAT FILE] Backend reported file delivery complete:", data);
-
-  // -------------------------------------------------------
-  // If the binary data has already completed and the
-  // incoming state has already been reset, simply notify
-  // React.
-  // -------------------------------------------------------
 
   if (!incomingFile) {
     dispatchMessage({
@@ -826,10 +972,6 @@ function handleIncomingFileDeliveryComplete(data) {
 
     return;
   }
-
-  // -------------------------------------------------------
-  // Check whether the expected binary data was received.
-  // -------------------------------------------------------
 
   if (
     incomingFile.expectedSize !== null &&
@@ -860,18 +1002,11 @@ function handleIncomingFileDeliveryComplete(data) {
     return;
   }
 
-  // -------------------------------------------------------
-  // Normally completeIncomingFile() has already created
-  // the Blob and reset incomingFile.
-  //
-  // If we still have incomingFile here, complete it now.
-  // -------------------------------------------------------
-
-  completeIncomingFile();
+  void completeIncomingFile();
 }
 
 // =========================================================
-// HANDLE INCOMING ARRAYBUFFER
+// HANDLE INCOMING PRIVATE ARRAYBUFFER
 // =========================================================
 
 function handleIncomingBinaryFile(arrayBuffer) {
@@ -883,19 +1018,11 @@ function handleIncomingBinaryFile(arrayBuffer) {
 
   console.log("[CHAT FILE] Received binary chunk:", byteLength, "bytes");
 
-  // -------------------------------------------------------
-  // No metadata yet
-  // -------------------------------------------------------
-
   if (!incomingFile) {
     console.warn("[CHAT FILE] Binary data received without file metadata.");
 
     return;
   }
-
-  // -------------------------------------------------------
-  // Validate expected size
-  // -------------------------------------------------------
 
   if (
     incomingFile.expectedSize !== null &&
@@ -918,17 +1045,9 @@ function handleIncomingBinaryFile(arrayBuffer) {
     return;
   }
 
-  // -------------------------------------------------------
-  // Store chunk
-  // -------------------------------------------------------
-
   incomingFile.chunks.push(arrayBuffer);
 
   incomingFile.receivedSize += byteLength;
-
-  // -------------------------------------------------------
-  // Progress
-  // -------------------------------------------------------
 
   let progress = 0;
 
@@ -938,12 +1057,6 @@ function handleIncomingBinaryFile(arrayBuffer) {
       Math.round((incomingFile.receivedSize / incomingFile.expectedSize) * 100),
     );
   }
-
-  console.log(
-    "[CHAT FILE] Receive progress:",
-    `${progress}%`,
-    `${incomingFile.receivedSize}/${incomingFile.expectedSize}`,
-  );
 
   dispatchMessage({
     type: "file_receive_progress",
@@ -959,10 +1072,6 @@ function handleIncomingBinaryFile(arrayBuffer) {
     progress,
   });
 
-  // -------------------------------------------------------
-  // File complete
-  // -------------------------------------------------------
-
   if (
     incomingFile.expectedSize !== null &&
     incomingFile.receivedSize === incomingFile.expectedSize
@@ -972,7 +1081,7 @@ function handleIncomingBinaryFile(arrayBuffer) {
 }
 
 // =========================================================
-// HANDLE INCOMING BLOB
+// HANDLE INCOMING PRIVATE BLOB
 // =========================================================
 
 async function handleIncomingBlobFile(blob) {
@@ -998,7 +1107,7 @@ async function handleIncomingBlobFile(blob) {
 }
 
 // =========================================================
-// COMPLETE INCOMING FILE
+// COMPLETE PRIVATE FILE
 // =========================================================
 
 async function completeIncomingFile() {
@@ -1022,13 +1131,10 @@ async function completeIncomingFile() {
       type: getMimeType(fileData.fileName),
     });
 
-    // -------------------------------------------------------
-    // VALIDATE SIZE
-    // -------------------------------------------------------
-
     if (fileData.expectedSize && blob.size !== fileData.expectedSize) {
       console.error("[CHAT FILE] Final Blob size mismatch.", {
         expected: fileData.expectedSize,
+
         actual: blob.size,
       });
 
@@ -1042,14 +1148,8 @@ async function completeIncomingFile() {
         message: "Received file is incomplete or corrupted.",
       });
 
-      resetIncomingFile();
-
       return;
     }
-
-    // -------------------------------------------------------
-    // SAVE PERMANENTLY IN INDEXEDDB
-    // -------------------------------------------------------
 
     const storedFile = await saveReceivedFile({
       sender: fileData.sender,
@@ -1073,15 +1173,7 @@ async function completeIncomingFile() {
       storedFile.id,
     );
 
-    // -------------------------------------------------------
-    // CREATE TEMPORARY URL FOR CURRENT SESSION
-    // -------------------------------------------------------
-
     const downloadUrl = URL.createObjectURL(blob);
-
-    // -------------------------------------------------------
-    // SEND TO CHAT UI
-    // -------------------------------------------------------
 
     dispatchMessage({
       type: "file_received",
@@ -1120,11 +1212,340 @@ async function completeIncomingFile() {
 }
 
 // =========================================================
-// RESET INCOMING FILE
+// RESET PRIVATE INCOMING FILE
 // =========================================================
 
 function resetIncomingFile() {
   incomingFile = null;
+}
+
+// =========================================================
+// GROUP FILE DELIVERY STARTED
+// =========================================================
+
+function handleIncomingGroupFileDeliveryStarted(data) {
+  console.log("[CHAT GROUP FILE] Delivery started:", data);
+
+  const sender =
+    typeof data.sender === "string" && data.sender.trim()
+      ? data.sender.trim()
+      : "Unknown";
+
+  const groupName =
+    typeof data.groupName === "string" && data.groupName.trim()
+      ? data.groupName.trim()
+      : "";
+
+  const fileName =
+    typeof data.fileName === "string" && data.fileName.trim()
+      ? data.fileName.trim()
+      : "received-file";
+
+  const fileSize = Number(data.fileSize);
+
+  if (!groupName) {
+    console.error("[CHAT GROUP FILE] Missing group name.");
+
+    return;
+  }
+
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    console.error("[CHAT GROUP FILE] Invalid file size:", data.fileSize);
+
+    dispatchMessage({
+      type: "group_file_receive_error",
+
+      sender,
+
+      groupName,
+
+      fileName,
+
+      message: "Invalid incoming group file size.",
+    });
+
+    return;
+  }
+
+  if (fileSize > MAX_FILE_SIZE) {
+    dispatchMessage({
+      type: "group_file_receive_error",
+
+      sender,
+
+      groupName,
+
+      fileName,
+
+      message: "Incoming group file is larger than the 100 MB limit.",
+    });
+
+    return;
+  }
+
+  if (incomingGroupFile) {
+    resetIncomingGroupFile();
+  }
+
+  incomingGroupFile = {
+    transferId: data.transferId || null,
+    sender,
+    groupName,
+    fileName,
+    expectedSize: fileSize,
+    receivedSize: 0,
+    chunks: [],
+    startedAt: Date.now(),
+  };
+
+  dispatchMessage({
+    type: "group_file_receive_started",
+
+    sender,
+
+    groupName,
+
+    fileName,
+
+    fileSize,
+
+    receivedSize: 0,
+
+    progress: 0,
+  });
+}
+
+// =========================================================
+// HANDLE INCOMING GROUP FILE BINARY
+// =========================================================
+
+function handleIncomingGroupFileBinary(arrayBuffer) {
+  if (!(arrayBuffer instanceof ArrayBuffer)) {
+    return;
+  }
+
+  if (!incomingGroupFile) {
+    console.warn(
+      "[CHAT GROUP FILE] Binary data received without group file metadata.",
+    );
+
+    return;
+  }
+
+  const byteLength = arrayBuffer.byteLength;
+
+  if (
+    incomingGroupFile.receivedSize + byteLength >
+    incomingGroupFile.expectedSize
+  ) {
+    dispatchMessage({
+      type: "group_file_receive_error",
+
+      sender: incomingGroupFile.sender,
+
+      groupName: incomingGroupFile.groupName,
+
+      fileName: incomingGroupFile.fileName,
+
+      message: "Incoming group file exceeded expected size.",
+    });
+
+    resetIncomingGroupFile();
+
+    return;
+  }
+
+  incomingGroupFile.chunks.push(arrayBuffer);
+
+  incomingGroupFile.receivedSize += byteLength;
+
+  const progress = Math.min(
+    100,
+    Math.round(
+      (incomingGroupFile.receivedSize / incomingGroupFile.expectedSize) * 100,
+    ),
+  );
+
+  dispatchMessage({
+    type: "group_file_receive_progress",
+
+    sender: incomingGroupFile.sender,
+
+    groupName: incomingGroupFile.groupName,
+
+    fileName: incomingGroupFile.fileName,
+
+    receivedSize: incomingGroupFile.receivedSize,
+
+    expectedSize: incomingGroupFile.expectedSize,
+
+    progress,
+  });
+
+  if (incomingGroupFile.receivedSize === incomingGroupFile.expectedSize) {
+    void completeIncomingGroupFile();
+  }
+}
+
+// =========================================================
+// HANDLE INCOMING GROUP FILE BLOB
+// =========================================================
+
+async function handleIncomingGroupFileBlob(blob) {
+  if (!(blob instanceof Blob)) {
+    return;
+  }
+
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+
+    handleIncomingGroupFileBinary(arrayBuffer);
+  } catch (error) {
+    console.error("[CHAT GROUP FILE] Failed to read Blob:", error);
+
+    dispatchMessage({
+      type: "group_file_receive_error",
+
+      message: "Unable to read incoming group file data.",
+    });
+
+    resetIncomingGroupFile();
+  }
+}
+
+// =========================================================
+// GROUP FILE DELIVERY COMPLETE
+// =========================================================
+
+function handleIncomingGroupFileDeliveryComplete(data) {
+  console.log("[CHAT GROUP FILE] Backend reported delivery complete:", data);
+
+  if (!incomingGroupFile) {
+    dispatchMessage({
+      type: "group_file_delivery_complete",
+
+      sender: data.sender || "Unknown",
+
+      groupName: data.groupName || "",
+
+      fileName: data.fileName || "received-file",
+
+      fileSize: Number(data.fileSize) || 0,
+    });
+
+    return;
+  }
+
+  if (incomingGroupFile.receivedSize !== incomingGroupFile.expectedSize) {
+    dispatchMessage({
+      type: "group_file_receive_error",
+
+      sender: incomingGroupFile.sender,
+
+      groupName: incomingGroupFile.groupName,
+
+      fileName: incomingGroupFile.fileName,
+
+      message:
+        "Group file delivery completed on the server, but the browser received incomplete data.",
+    });
+
+    resetIncomingGroupFile();
+
+    return;
+  }
+
+  void completeIncomingGroupFile();
+}
+
+// =========================================================
+// COMPLETE INCOMING GROUP FILE
+// =========================================================
+
+async function completeIncomingGroupFile() {
+  if (!incomingGroupFile) return;
+
+  const fileData = incomingGroupFile;
+  incomingGroupFile = null;
+
+  try {
+    const fileName = sanitizeFileName(fileData.fileName);
+    const fileType = getMimeType(fileName);
+
+    const blob = new Blob(fileData.chunks, { type: fileType });
+
+    if (blob.size !== fileData.expectedSize) {
+      dispatchMessage({
+        type: "group_file_receive_error",
+        sender: fileData.sender,
+        groupName: fileData.groupName,
+        fileName,
+        message: "Received group file is incomplete or corrupted.",
+      });
+      return;
+    }
+
+    const receivedAt = new Date().toISOString();
+
+    const storedFile = await saveReceivedFile({
+      id: fileData.transferId || null,
+      transferId: fileData.transferId || null,
+      sender: fileData.sender,
+      recipient: currentChatUsername,
+      owner: currentChatUsername,
+      direction: "received",
+      groupName: fileData.groupName,
+      fileName,
+      fileSize: blob.size,
+      fileType,
+      blob,
+      receivedAt,
+    });
+
+    const downloadUrl = URL.createObjectURL(storedFile.blob || blob);
+
+    dispatchMessage({
+      type: "group_file_received",
+      id: storedFile.id,
+      transferId: storedFile.transferId || fileData.transferId || null,
+      sender: fileData.sender,
+      recipient: currentChatUsername,
+      groupName: fileData.groupName,
+      fileName,
+      fileSize: blob.size,
+      fileType,
+      blob: storedFile.blob || blob,
+      downloadUrl,
+      receivedAt: storedFile.receivedAt || receivedAt,
+      persisted: true,
+      message: `${fileName} received in ${fileData.groupName}.`,
+    });
+
+    console.log(
+      "[CHAT GROUP FILE] Stored group file:",
+      fileName,
+      "Transfer:",
+      fileData.transferId || "legacy transfer",
+    );
+  } catch (error) {
+    console.error("[CHAT GROUP FILE] Failed to store group file:", error);
+
+    dispatchMessage({
+      type: "group_file_receive_error",
+      sender: fileData.sender,
+      groupName: fileData.groupName,
+      fileName: sanitizeFileName(fileData.fileName),
+      message: "The group file was received but could not be saved locally.",
+    });
+  }
+}
+
+// =========================================================
+// RESET INCOMING GROUP FILE
+// =========================================================
+
+function resetIncomingGroupFile() {
+  incomingGroupFile = null;
 }
 
 // =========================================================
@@ -1139,19 +1560,9 @@ function sanitizeFileName(fileName) {
   let cleaned = fileName.replace(/[\\/]/g, "_").replace(/\.\./g, "_").trim();
 
   // Remove temporary backend filename prefix.
-  //
-  // Example:
-  // temp_1790959760222_cloudchat-123456-7_file.pdf
-  // becomes:
-  // cloudchat-123456-7_file.pdf
   cleaned = cleaned.replace(/^temp_\d+_/, "");
 
   // Remove CloudChat transport prefix.
-  //
-  // Example:
-  // cloudchat-123456789-7_file.pdf
-  // becomes:
-  // file.pdf
   cleaned = cleaned.replace(/^cloudchat-[\d-]+_/, "");
 
   return cleaned || "received-file";
@@ -1180,9 +1591,11 @@ function getMimeType(fileName) {
     xml: "application/xml",
 
     html: "text/html",
+
     htm: "text/html",
 
     jpg: "image/jpeg",
+
     jpeg: "image/jpeg",
 
     png: "image/png",
@@ -1269,7 +1682,7 @@ function dispatchMessage(data) {
   }
 
   // ---------------------------------------------------------
-  // Queue normal messages when Chat.jsx is not listening
+  // Queue normal messages
   // ---------------------------------------------------------
 
   if (data.type === "message" || data.type === "private_message") {
@@ -1279,7 +1692,7 @@ function dispatchMessage(data) {
   }
 
   // ---------------------------------------------------------
-  // Queue received files when Chat.jsx is not listening
+  // Queue private received files
   // ---------------------------------------------------------
 
   if (data.type === "file_received") {
@@ -1294,8 +1707,29 @@ function dispatchMessage(data) {
     pendingFiles.push(data);
 
     console.log("[CHAT WS] File queued for Chat.jsx:", data.fileName);
+
+    return;
+  }
+
+  // ---------------------------------------------------------
+  // Queue received group files
+  // ---------------------------------------------------------
+
+  if (data.type === "group_file_received") {
+    if (pendingGroupFiles.length >= MAX_PENDING_GROUP_FILES) {
+      const oldestFile = pendingGroupFiles.shift();
+
+      if (oldestFile?.downloadUrl) {
+        URL.revokeObjectURL(oldestFile.downloadUrl);
+      }
+    }
+
+    pendingGroupFiles.push(data);
+
+    console.log("[CHAT WS] Group file queued:", data.fileName);
   }
 }
+
 // =========================================================
 // QUEUE PENDING MESSAGE
 // =========================================================
@@ -1319,10 +1753,6 @@ function queuePendingMessage(data) {
 // =========================================================
 
 export function sendChatMessage(message) {
-  // -------------------------------------------------------
-  // Validate message
-  // -------------------------------------------------------
-
   if (message === null || message === undefined) {
     console.error("[CHAT WS] Cannot send empty message.");
 
@@ -1337,19 +1767,11 @@ export function sendChatMessage(message) {
     return false;
   }
 
-  // -------------------------------------------------------
-  // Check connection
-  // -------------------------------------------------------
-
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     console.error("[CHAT WS] Socket is not connected.");
 
     return false;
   }
-
-  // -------------------------------------------------------
-  // Normal chat commands are ALWAYS sent as TEXT.
-  // -------------------------------------------------------
 
   try {
     const sent = sendWebSocketMessage(text);
@@ -1380,19 +1802,11 @@ export function sendChatCommand(command) {
 
 export function sendPrivateFile(recipient, file, onProgress = null) {
   return new Promise((resolve, reject) => {
-    // -----------------------------------------------------
-    // Check WebSocket
-    // -----------------------------------------------------
-
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       reject(new Error("Chat is not connected."));
 
       return;
     }
-
-    // -----------------------------------------------------
-    // Check recipient
-    // -----------------------------------------------------
 
     if (!recipient || !recipient.trim()) {
       reject(new Error("Recipient is required."));
@@ -1400,19 +1814,11 @@ export function sendPrivateFile(recipient, file, onProgress = null) {
       return;
     }
 
-    // -----------------------------------------------------
-    // Check file
-    // -----------------------------------------------------
-
     if (!file) {
       reject(new Error("No file selected."));
 
       return;
     }
-
-    // -----------------------------------------------------
-    // Check file size
-    // -----------------------------------------------------
 
     if (typeof file.size !== "number") {
       reject(new Error("Unable to determine file size."));
@@ -1432,19 +1838,11 @@ export function sendPrivateFile(recipient, file, onProgress = null) {
       return;
     }
 
-    // -----------------------------------------------------
-    // Only one upload at a time
-    // -----------------------------------------------------
-
-    if (fileUploadInProgress) {
+    if (fileUploadInProgress || groupFileUploadInProgress) {
       reject(new Error("Another file upload is already in progress."));
 
       return;
     }
-
-    // -----------------------------------------------------
-    // Prepare upload state
-    // -----------------------------------------------------
 
     const cleanRecipient = recipient.trim();
 
@@ -1464,17 +1862,9 @@ export function sendPrivateFile(recipient, file, onProgress = null) {
       onProgress,
     };
 
-    // -----------------------------------------------------
-    // Initial progress
-    // -----------------------------------------------------
-
     if (typeof onProgress === "function") {
       onProgress(0, 0, file.size);
     }
-
-    // -----------------------------------------------------
-    // Send ONLY file-start JSON
-    // -----------------------------------------------------
 
     try {
       const fileStartMessage = JSON.stringify({
@@ -1501,7 +1891,7 @@ export function sendPrivateFile(recipient, file, onProgress = null) {
 }
 
 // =========================================================
-// SEND FILE IN BINARY CHUNKS
+// SEND PRIVATE FILE IN BINARY CHUNKS
 // =========================================================
 
 async function uploadFileChunks(file, onProgress) {
@@ -1509,7 +1899,6 @@ async function uploadFileChunks(file, onProgress) {
     throw new Error("Chat connection was lost.");
   }
 
-  // 64 KB chunks.
   const CHUNK_SIZE = 64 * 1024;
 
   let offset = 0;
@@ -1517,27 +1906,15 @@ async function uploadFileChunks(file, onProgress) {
   console.log("[CHAT WS] Starting binary upload:", file.name);
 
   while (offset < file.size) {
-    // -----------------------------------------------------
-    // Check connection
-    // -----------------------------------------------------
-
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error("Chat connection was lost during file upload.");
     }
-
-    // -----------------------------------------------------
-    // Read next chunk
-    // -----------------------------------------------------
 
     const end = Math.min(offset + CHUNK_SIZE, file.size);
 
     const chunk = file.slice(offset, end);
 
     const buffer = await chunk.arrayBuffer();
-
-    // -----------------------------------------------------
-    // Send binary chunk
-    // -----------------------------------------------------
 
     const sent = sendWebSocketBinary(buffer);
 
@@ -1547,10 +1924,6 @@ async function uploadFileChunks(file, onProgress) {
 
     offset += buffer.byteLength;
 
-    // -----------------------------------------------------
-    // Progress
-    // -----------------------------------------------------
-
     const progress = Math.min(100, Math.round((offset / file.size) * 100));
 
     console.log("[CHAT WS] File upload progress:", `${progress}%`);
@@ -1559,16 +1932,156 @@ async function uploadFileChunks(file, onProgress) {
       onProgress(progress, offset, file.size);
     }
 
-    // -----------------------------------------------------
-    // Yield to browser
-    // -----------------------------------------------------
-
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
   }
 
   console.log("[CHAT WS] All file chunks sent:", file.name);
+}
+
+// =========================================================
+// SEND GROUP FILE
+// =========================================================
+
+export function sendGroupFile(groupName, file, onProgress = null) {
+  return new Promise((resolve, reject) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      reject(new Error("Chat is not connected."));
+
+      return;
+    }
+
+    if (!groupName || !groupName.trim()) {
+      reject(new Error("Group name is required."));
+
+      return;
+    }
+
+    if (!file) {
+      reject(new Error("No file selected."));
+
+      return;
+    }
+
+    if (typeof file.size !== "number") {
+      reject(new Error("Unable to determine file size."));
+
+      return;
+    }
+
+    if (file.size <= 0) {
+      reject(new Error("The selected file is empty."));
+
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      reject(new Error("File is too large. Maximum size is 100 MB."));
+
+      return;
+    }
+
+    if (fileUploadInProgress || groupFileUploadInProgress) {
+      reject(new Error("Another file upload is already in progress."));
+
+      return;
+    }
+
+    const cleanGroupName = groupName.trim();
+
+    groupFileUploadInProgress = true;
+
+    activeGroupFileUpload = {
+      groupName: cleanGroupName,
+
+      file,
+
+      started: false,
+
+      resolve,
+
+      reject,
+
+      onProgress,
+    };
+
+    if (typeof onProgress === "function") {
+      onProgress(0, 0, file.size);
+    }
+
+    try {
+      const message = JSON.stringify({
+        type: "group_file_start",
+
+        groupName: cleanGroupName,
+
+        fileName: file.name,
+
+        fileSize: file.size,
+      });
+
+      console.log("[CHAT GROUP FILE] Sending group_file_start:", message);
+
+      socket.send(message);
+    } catch (error) {
+      activeGroupFileUpload = null;
+
+      groupFileUploadInProgress = false;
+
+      reject(error);
+    }
+  });
+}
+
+// =========================================================
+// SEND GROUP FILE IN BINARY CHUNKS
+// =========================================================
+
+async function uploadGroupFileChunks(file, onProgress) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    throw new Error("Chat connection was lost.");
+  }
+
+  const CHUNK_SIZE = 64 * 1024;
+
+  let offset = 0;
+
+  console.log("[CHAT GROUP FILE] Starting binary upload:", file.name);
+
+  while (offset < file.size) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Chat connection was lost during group file upload.");
+    }
+
+    const end = Math.min(offset + CHUNK_SIZE, file.size);
+
+    const chunk = file.slice(offset, end);
+
+    const buffer = await chunk.arrayBuffer();
+
+    const sent = sendWebSocketBinary(buffer);
+
+    if (!sent) {
+      throw new Error("Failed to send group file chunk.");
+    }
+
+    offset += buffer.byteLength;
+
+    const progress = Math.min(100, Math.round((offset / file.size) * 100));
+
+    console.log("[CHAT GROUP FILE] Upload progress:", `${progress}%`);
+
+    if (typeof onProgress === "function") {
+      onProgress(progress, offset, file.size);
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
+
+  console.log("[CHAT GROUP FILE] All file chunks sent:", file.name);
 }
 
 // =========================================================
@@ -1586,6 +2099,10 @@ export function getChatSocket() {
 export function isChatConnected() {
   return socket !== null && socket.readyState === WebSocket.OPEN;
 }
+
+// =========================================================
+// RESTORE PERSISTED PRIVATE FILES
+// =========================================================
 
 async function restorePersistedFiles(handler) {
   if (!currentChatUsername) {
@@ -1624,21 +2141,18 @@ async function restorePersistedFiles(handler) {
 
         fileId: file.id,
 
-        // Actual sender of the file
         sender: file.sender,
 
-        // Actual recipient of the file
         recipient: file.recipient,
 
-        // Used by Chat.jsx to decide which conversation
-        // the file belongs to
         conversationUser,
 
-        // Sent by current user OR received from another user
         own: isSent,
 
         fileName: file.fileName,
+
         fileSize: file.fileSize,
+
         fileType: file.fileType,
 
         downloadUrl,
@@ -1689,7 +2203,7 @@ export function onChatMessage(handler) {
   }
 
   // =========================================================
-  // REPLAY PENDING FILES
+  // REPLAY PENDING PRIVATE FILES
   // =========================================================
 
   if (pendingFiles.length > 0) {
@@ -1707,7 +2221,25 @@ export function onChatMessage(handler) {
   }
 
   // =========================================================
-  // RESTORE FILES FROM INDEXEDDB
+  // REPLAY PENDING GROUP FILES
+  // =========================================================
+
+  if (pendingGroupFiles.length > 0) {
+    const groupFilesToReplay = [...pendingGroupFiles];
+
+    pendingGroupFiles = [];
+
+    groupFilesToReplay.forEach((data) => {
+      try {
+        handler(data);
+      } catch (error) {
+        console.error("[CHAT WS] Pending group file replay error:", error);
+      }
+    });
+  }
+
+  // =========================================================
+  // RESTORE PRIVATE FILES FROM INDEXEDDB
   // =========================================================
 
   void restorePersistedFiles(handler);
@@ -1759,7 +2291,7 @@ export function disconnectChat() {
   console.log("[CHAT WS] Disconnecting chat...");
 
   // -------------------------------------------------------
-  // Reject active upload BEFORE closing socket
+  // Reject private upload
   // -------------------------------------------------------
 
   if (activeFileUpload) {
@@ -1773,10 +2305,25 @@ export function disconnectChat() {
   }
 
   // -------------------------------------------------------
+  // Reject group upload
+  // -------------------------------------------------------
+
+  if (activeGroupFileUpload) {
+    const upload = activeGroupFileUpload;
+
+    activeGroupFileUpload = null;
+
+    groupFileUploadInProgress = false;
+
+    upload.reject(new Error("Chat disconnected during group file upload."));
+  }
+
+  // -------------------------------------------------------
   // Close WebSocket
   // -------------------------------------------------------
 
   closeWebSocket();
+
   socket = null;
 
   // -------------------------------------------------------
@@ -1784,6 +2331,10 @@ export function disconnectChat() {
   // -------------------------------------------------------
 
   pendingMessages = [];
+
+  // -------------------------------------------------------
+  // Clear pending private files
+  // -------------------------------------------------------
 
   pendingFiles.forEach((file) => {
     if (file?.downloadUrl) {
@@ -1794,8 +2345,22 @@ export function disconnectChat() {
   pendingFiles = [];
 
   // -------------------------------------------------------
-  // Clear incoming file
+  // Clear pending group files
+  // -------------------------------------------------------
+
+  pendingGroupFiles.forEach((file) => {
+    if (file?.downloadUrl) {
+      URL.revokeObjectURL(file.downloadUrl);
+    }
+  });
+
+  pendingGroupFiles = [];
+
+  // -------------------------------------------------------
+  // Clear incoming files
   // -------------------------------------------------------
 
   resetIncomingFile();
+
+  resetIncomingGroupFile();
 }

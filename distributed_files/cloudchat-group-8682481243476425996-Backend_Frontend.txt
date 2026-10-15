@@ -1,0 +1,36 @@
+Backend
+
+✅ Multi-client chat
+✅ Private messaging
+✅ Group chat
+✅ Distributed servers
+✅ Server failover
+✅ Online-user synchronization
+✅ Distributed groups
+✅ Distributed group files
+✅ Offline private messages
+✅ Offline private files
+✅ Offline group messages
+✅ Offline group files
+✅ Group ownership/member management
+✅ Join requests & access control
+✅ Server load monitoring
+✅ Distributed load synchronization
+✅ Load balancing
+✅ Server health/monitoring API
+✅ Cluster status API
+✅ Server failure detection
+✅ MongoDB persistence
+✅ BCrypt authentication
+
+Frontend
+
+Login/Register
+Chat UI
+Private chats
+Groups
+File sharing
+Offline notifications
+Server/load status
+Monitoring dashboard
+Server selection/failover information

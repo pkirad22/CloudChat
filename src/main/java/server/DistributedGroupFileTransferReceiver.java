@@ -5,7 +5,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import service.OfflineGroupFileService;
 
@@ -22,8 +25,14 @@ public class DistributedGroupFileTransferReceiver
 
         private final List<String> recipients;
 
+        private final String transferId;
+
         private final String sourceServer;
         private final String destinationServer;
+
+        // =========================================================
+        // CONSTRUCTOR
+        // =========================================================
 
         public DistributedGroupFileTransferReceiver(
                         String host,
@@ -34,7 +43,8 @@ public class DistributedGroupFileTransferReceiver
                         long expectedFileSize,
                         List<String> recipients,
                         String sourceServer,
-                        String destinationServer) {
+                        String destinationServer,
+                        String transferId) {
 
                 this.host = host;
                 this.port = port;
@@ -43,15 +53,19 @@ public class DistributedGroupFileTransferReceiver
                 this.groupName = groupName;
 
                 this.expectedFileName = expectedFileName;
-
                 this.expectedFileSize = expectedFileSize;
 
                 this.recipients = recipients;
 
-                this.sourceServer = sourceServer;
+                this.transferId = transferId;
 
+                this.sourceServer = sourceServer;
                 this.destinationServer = destinationServer;
         }
+
+        // =========================================================
+        // BACKWARD-COMPATIBLE CONSTRUCTOR
+        // =========================================================
 
         public DistributedGroupFileTransferReceiver(
                         String host,
@@ -68,15 +82,20 @@ public class DistributedGroupFileTransferReceiver
                                 groupName,
                                 expectedFileName,
                                 expectedFileSize,
-                                new java.util.ArrayList<>(),
+                                new ArrayList<>(),
                                 "SERVER_1",
-                                "SERVER_2");
+                                "SERVER_2",
+                                java.util.UUID.randomUUID().toString());
         }
 
-        private java.util.List<String> getLocalRecipients(
+        // =========================================================
+        // GET LOCAL ONLINE GROUP MEMBERS
+        // =========================================================
+
+        private List<String> getLocalOnlineGroupMembers(
                         String groupName) {
 
-                java.util.List<String> localRecipients = new java.util.ArrayList<>();
+                List<String> localOnlineMembers = new ArrayList<>();
 
                 for (String username : ChatServer.getLocalOnlineUsers()) {
 
@@ -86,58 +105,166 @@ public class DistributedGroupFileTransferReceiver
                                 continue;
                         }
 
+                        username = username.trim();
+
+                        // -------------------------------------------------
+                        // Sender must never receive his own file
+                        // -------------------------------------------------
+
+                        if (username.equals(sender)) {
+                                continue;
+                        }
+
                         ClientHandler client = ChatServer.getOnlineUser(username);
 
                         if (client == null) {
                                 continue;
                         }
 
+                        // -------------------------------------------------
+                        // Verify actual group membership
+                        // -------------------------------------------------
+
                         if (ChatServer.isAnyGroupMember(
                                         groupName,
                                         client)) {
 
-                                localRecipients.add(username);
+                                localOnlineMembers.add(
+                                                username);
                         }
                 }
 
-                return localRecipients;
+                return localOnlineMembers;
         }
+
+        // =========================================================
+        // GET LOCAL GROUP MEMBERS
+        // =========================================================
+        //
+        // Includes:
+        // - Online local members
+        // - Offline local members
+        //
+        // ChatServer provides the persistent membership list.
+        //
+        // =========================================================
+
+        private Set<String> getLocalGroupMembers(
+                        String groupName) {
+
+                Set<String> localMembers = ConcurrentHashMap.newKeySet();
+
+                Set<String> persistentMembers = ChatServer.getPersistentGroupMembers(
+                                groupName);
+
+                Set<String> remoteMembers = ChatServer.getRemoteGroupMembers(
+                                groupName);
+
+                if (persistentMembers == null
+                                || persistentMembers.isEmpty()) {
+
+                        return localMembers;
+                }
+
+                if (remoteMembers == null) {
+                        remoteMembers = Set.of();
+                }
+
+                for (String username : persistentMembers) {
+
+                        if (username == null
+                                        || username.trim().isEmpty()) {
+
+                                continue;
+                        }
+
+                        username = username.trim();
+
+                        // -------------------------------------------------
+                        // Never deliver back to sender
+                        // -------------------------------------------------
+
+                        if (username.equals(sender)) {
+                                continue;
+                        }
+
+                        // -------------------------------------------------
+                        // User belongs to the other server
+                        // -------------------------------------------------
+
+                        if (remoteMembers.contains(username)) {
+                                continue;
+                        }
+
+                        localMembers.add(username);
+                }
+
+                return localMembers;
+        }
+
+        // =========================================================
+        // RUN
+        // =========================================================
 
         @Override
         public void run() {
 
                 System.out.println();
+
                 System.out.println(
                                 "[GROUP-FILE-DIST] Connecting to source server...");
 
                 System.out.println(
-                                "[GROUP-FILE-DIST] Host: " + host);
+                                "[GROUP-FILE-DIST] Host: "
+                                                + host);
 
                 System.out.println(
-                                "[GROUP-FILE-DIST] Port: " + port);
+                                "[GROUP-FILE-DIST] Port: "
+                                                + port);
 
                 System.out.println(
-                                "[GROUP-FILE-DIST] Group: " + groupName);
+                                "[GROUP-FILE-DIST] Group: "
+                                                + groupName);
 
                 System.out.println(
-                                "[GROUP-FILE-DIST] Sender: " + sender);
+                                "[GROUP-FILE-DIST] Sender: "
+                                                + sender);
+
+                System.out.println(
+                                "[GROUP-FILE-DIST] Source server: "
+                                                + sourceServer);
+
+                System.out.println(
+                                "[GROUP-FILE-DIST] Destination server: "
+                                                + destinationServer);
 
                 try (
-                                Socket socket = new Socket(host, port);
+                                Socket socket = new Socket(
+                                                host,
+                                                port);
 
                                 DataInputStream input = new DataInputStream(
                                                 socket.getInputStream())) {
 
                         System.out.println(
-                                        "[GROUP-FILE-DIST] Connected to source server.");
+                                        "[GROUP-FILE-DIST] "
+                                                        + "Connected to source server.");
 
                         // =====================================================
                         // RECEIVE FILE METADATA
                         // =====================================================
 
+                        String receivedTransferId = input.readUTF();
                         String fileName = input.readUTF();
-
                         long fileSize = input.readLong();
+
+                        if (!transferId.equals(receivedTransferId)) {
+                                throw new IOException(
+                                                "Group file transfer ID mismatch. Expected: "
+                                                                + transferId
+                                                                + ", received: "
+                                                                + receivedTransferId);
+                        }
 
                         System.out.println(
                                         "[GROUP-FILE-DIST] Receiving file: "
@@ -149,33 +276,61 @@ public class DistributedGroupFileTransferReceiver
                                                         + " bytes");
 
                         // =====================================================
-                        // VALIDATE METADATA
+                        // VALIDATE FILE NAME
                         // =====================================================
 
-                        if (!fileName.equals(expectedFileName)) {
+                        if (!fileName.equals(
+                                        expectedFileName)) {
 
                                 System.out.println(
                                                 "[GROUP-FILE-DIST] WARNING: "
                                                                 + "File name mismatch.");
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] Expected: "
+                                                                + expectedFileName);
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] Received: "
+                                                                + fileName);
                         }
+
+                        // =====================================================
+                        // VALIDATE FILE SIZE
+                        // =====================================================
 
                         if (fileSize != expectedFileSize) {
 
                                 System.out.println(
                                                 "[GROUP-FILE-DIST] WARNING: "
                                                                 + "File size mismatch.");
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] Expected: "
+                                                                + expectedFileSize);
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] Received: "
+                                                                + fileSize);
                         }
 
                         // =====================================================
                         // CREATE DIRECTORY
                         // =====================================================
 
-                        File directory = new File(
-                                        "distributed_files");
+                        File directory = new File("distributed_files");
 
                         if (!directory.exists()) {
 
-                                directory.mkdirs();
+                                if (!directory.mkdirs()) {
+
+                                        System.out.println(
+                                                        "[GROUP-FILE-DIST] "
+                                                                        + "Unable to create directory: "
+                                                                        + directory.getAbsolutePath());
+
+                                        return;
+                                }
                         }
 
                         // =====================================================
@@ -191,7 +346,8 @@ public class DistributedGroupFileTransferReceiver
                         // =====================================================
 
                         try (
-                                        FileOutputStream output = new FileOutputStream(outputFile)) {
+                                        FileOutputStream output = new FileOutputStream(
+                                                        outputFile)) {
 
                                 byte[] buffer = new byte[8192];
 
@@ -201,7 +357,8 @@ public class DistributedGroupFileTransferReceiver
 
                                         int bytesToRead = (int) Math.min(
                                                         buffer.length,
-                                                        fileSize - totalReceived);
+                                                        fileSize
+                                                                        - totalReceived);
 
                                         int bytesRead = input.read(
                                                         buffer,
@@ -243,138 +400,198 @@ public class DistributedGroupFileTransferReceiver
 
                                 System.out.println(
                                                 "[GROUP-FILE-DIST] Saved to: "
-                                                                + outputFile
-                                                                                .getAbsolutePath());
+                                                                + outputFile.getAbsolutePath());
 
                                 System.out.println(
                                                 "[GROUP-FILE-DIST] Total bytes received: "
                                                                 + totalReceived);
 
                                 // =================================================
-                                // DELIVER ONLINE + QUEUE OFFLINE MEMBERS
+                                // VERIFY COMPLETE FILE
                                 // =================================================
 
-                                if (totalReceived == fileSize) {
+                                if (totalReceived != fileSize) {
 
                                         System.out.println(
                                                         "[GROUP-FILE-DIST] "
-                                                                        + "File transfer completed.");
+                                                                        + "File transfer incomplete.");
 
-                                        // =================================================
-                                        // FIND LOCAL ONLINE RECIPIENTS
-                                        // =================================================
+                                        return;
+                                }
 
-                                        java.util.List<String> localOnlineRecipients = getLocalRecipients(groupName);
+                                // =================================================
+                                // FIND LOCAL ONLINE RECIPIENTS
+                                // =================================================
+
+                                List<String> localOnlineRecipients = getLocalOnlineGroupMembers(
+                                                groupName);
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] "
+                                                                + "Local online recipients: "
+                                                                + localOnlineRecipients);
+
+                                // =================================================
+                                // DELIVER TO LOCAL ONLINE MEMBERS
+                                // =================================================
+
+                                if (!localOnlineRecipients.isEmpty()) {
 
                                         System.out.println(
-                                                        "[GROUP-FILE-DIST] Local online recipients: "
-                                                                        + localOnlineRecipients);
+                                                        "[GROUP-FILE-DIST] "
+                                                                        + "Starting local group delivery...");
 
-                                        // =================================================
-                                        // DELIVER TO ONLINE MEMBERS
-                                        // =================================================
+                                        GroupFileTransferTracker tracker = new GroupFileTransferTracker(
+                                                        sender,
+                                                        groupName,
+                                                        outputFile,
+                                                        recipients,
+                                                        localOnlineRecipients,
+                                                        "DISTRIBUTED_GROUP",
+                                                        sourceServer,
+                                                        destinationServer);
 
-                                        if (!localOnlineRecipients.isEmpty()) {
+                                        ChatServer.deliverGroupFileToLocalMembers(
+                                                        groupName,
+                                                        sender,
+                                                        outputFile,
+                                                        tracker,
+                                                        transferId);
+
+                                } else {
+
+                                        System.out.println(
+                                                        "[GROUP-FILE-DIST] "
+                                                                        + "No local online recipients.");
+                                }
+
+                                // =================================================
+                                // GET ALL LOCAL GROUP MEMBERS
+                                // =================================================
+
+                                List<String> localGroupMembers = new ArrayList<>(
+                                                getLocalGroupMembers(
+                                                                groupName));
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] "
+                                                                + "Local group members: "
+                                                                + localGroupMembers);
+
+                                // =================================================
+                                // GET OFFLINE GROUP FILE SERVICE
+                                // =================================================
+
+                                OfflineGroupFileService offlineGroupFileService = ChatServer
+                                                .getOfflineGroupFileService();
+
+                                if (offlineGroupFileService == null) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-FILE] "
+                                                                        + "Service is not initialized.");
+
+                                        return;
+                                }
+
+                                // =================================================
+                                // QUEUE OFFLINE LOCAL MEMBERS
+                                // =================================================
+
+                                for (String recipient : localGroupMembers) {
+
+                                        if (recipient == null
+                                                        || recipient.trim().isEmpty()) {
+
+                                                continue;
+                                        }
+
+                                        recipient = recipient.trim();
+
+                                        // -------------------------------------------------
+                                        // NEVER SEND TO SENDER
+                                        // -------------------------------------------------
+
+                                        if (recipient.equals(sender)) {
 
                                                 System.out.println(
-                                                                "[GROUP-FILE-DIST] "
-                                                                                + "Starting local group delivery...");
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "Skipping sender: "
+                                                                                + recipient);
 
-                                                GroupFileTransferTracker tracker = new GroupFileTransferTracker(
-                                                                sender,
-                                                                groupName,
-                                                                outputFile,
-                                                                recipients,
-                                                                localOnlineRecipients,
-                                                                "DISTRIBUTED_GROUP",
-                                                                sourceServer,
-                                                                destinationServer);
+                                                continue;
+                                        }
 
-                                                ChatServer.deliverGroupFileToLocalMembers(
-                                                                groupName,
-                                                                sender,
-                                                                outputFile,
-                                                                tracker);
+                                        // -------------------------------------------------
+                                        // ALREADY ONLINE LOCALLY
+                                        // -------------------------------------------------
+
+                                        if (localOnlineRecipients.contains(
+                                                        recipient)) {
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "Already online locally: "
+                                                                                + recipient);
+
+                                                continue;
+                                        }
+
+                                        // -------------------------------------------------
+                                        // USER IS OFFLINE LOCALLY
+                                        // -------------------------------------------------
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-FILE] "
+                                                                        + "Recipient offline locally: "
+                                                                        + recipient);
+
+                                        boolean saved = offlineGroupFileService
+                                                        .savePendingGroupFile(
+                                                                        sender,
+                                                                        recipient,
+                                                                        groupName,
+                                                                        outputFile);
+
+                                        if (saved) {
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "Group file queued: "
+                                                                                + sender
+                                                                                + " -> "
+                                                                                + recipient
+                                                                                + " ["
+                                                                                + groupName
+                                                                                + "] "
+                                                                                + outputFile.getName());
 
                                         } else {
 
                                                 System.out.println(
-                                                                "[GROUP-FILE-DIST] "
-                                                                                + "No local online recipients.");
-                                        }
-
-                                        // =================================================
-                                        // QUEUE OFFLINE RECIPIENTS
-                                        // =================================================
-
-                                        OfflineGroupFileService offlineGroupFileService = ChatServer
-                                                        .getOfflineGroupFileService();
-
-                                        if (offlineGroupFileService == null) {
-
-                                                System.out.println(
                                                                 "[OFFLINE-GROUP-FILE] "
-                                                                                + "Service is not initialized.");
-
-                                                return;
-                                        }
-
-                                        for (String recipient : recipients) {
-
-                                                if (recipient == null
-                                                                || recipient.trim().isEmpty()) {
-
-                                                        continue;
-                                                }
-
-                                                recipient = recipient.trim();
-
-                                                // -------------------------------------------------
-                                                // Already online locally
-                                                // -------------------------------------------------
-
-                                                if (localOnlineRecipients.contains(recipient)) {
-
-                                                        continue;
-                                                }
-
-                                                // -------------------------------------------------
-                                                // Recipient is offline on this destination server
-                                                // -------------------------------------------------
-
-                                                System.out.println(
-                                                                "[OFFLINE-GROUP-FILE] "
-                                                                                + "Recipient offline: "
+                                                                                + "Unable to queue group file for "
                                                                                 + recipient);
-
-                                                boolean saved = offlineGroupFileService
-                                                                .savePendingGroupFile(
-                                                                                sender,
-                                                                                recipient,
-                                                                                groupName,
-                                                                                outputFile);
-
-                                                if (saved) {
-
-                                                        System.out.println(
-                                                                        "[OFFLINE-GROUP-FILE] "
-                                                                                        + "Group file queued: "
-                                                                                        + sender
-                                                                                        + " -> "
-                                                                                        + recipient
-                                                                                        + " ["
-                                                                                        + groupName
-                                                                                        + "] "
-                                                                                        + outputFile.getName());
-                                                } else {
-
-                                                        System.out.println(
-                                                                        "[OFFLINE-GROUP-FILE] "
-                                                                                        + "Unable to queue group file for "
-                                                                                        + recipient);
-                                                }
                                         }
                                 }
+
+                                // =================================================
+                                // FINAL STATUS
+                                // =================================================
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] "
+                                                                + "Destination processing completed.");
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] "
+                                                                + "Online local recipients: "
+                                                                + localOnlineRecipients);
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] "
+                                                                + "Offline local recipients queued through "
+                                                                + "GridFS/PENDING.");
                         }
 
                 } catch (IOException e) {
@@ -382,6 +599,8 @@ public class DistributedGroupFileTransferReceiver
                         System.out.println(
                                         "[GROUP-FILE-DIST] Receive error: "
                                                         + e.getMessage());
+
+                        e.printStackTrace();
                 }
         }
 }

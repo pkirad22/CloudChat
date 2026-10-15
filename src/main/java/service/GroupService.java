@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import javax.swing.GroupLayout.Group;
 
@@ -1420,6 +1421,73 @@ public class GroupService {
                         System.out.println(
                                         "Getting groups failed: "
                                                         + e.getMessage());
+                }
+
+                return groupNames;
+        }
+
+        public List<String> getGroupsForUser(String username) {
+
+                List<String> groupNames = new ArrayList<>();
+
+                try {
+
+                        if (username == null || username.trim().isEmpty()) {
+                                return groupNames;
+                        }
+
+                        String user = username.trim();
+
+                        for (Document document : groups.find(eq("members", user))) {
+
+                                String groupName = document.getString("groupName");
+
+                                if (groupName != null) {
+                                        groupNames.add(groupName);
+                                }
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "Getting user groups failed: " + e.getMessage());
+                }
+
+                return groupNames;
+        }
+
+        public List<String> searchGroups(String searchText) {
+
+                List<String> groupNames = new ArrayList<>();
+
+                try {
+
+                        if (searchText == null || searchText.trim().isEmpty()) {
+                                return groupNames;
+                        }
+
+                        String search = searchText.trim();
+
+                        Document regex = new Document(
+                                        "$regex",
+                                        Pattern.quote(search)).append(
+                                                        "$options",
+                                                        "i");
+
+                        for (Document document : groups.find(
+                                        new Document("groupName", regex)).limit(20)) {
+
+                                String groupName = document.getString("groupName");
+
+                                if (groupName != null) {
+                                        groupNames.add(groupName);
+                                }
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "Searching groups failed: " + e.getMessage());
                 }
 
                 return groupNames;

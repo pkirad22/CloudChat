@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.UUID;
 
 public class WebSocketClientSession {
 
@@ -34,6 +35,26 @@ public class WebSocketClientSession {
         // =========================================================
 
         private File uploadFile;
+
+        // =========================================================
+        // GROUP FILE UPLOAD STATE
+        // =========================================================
+
+        private File groupUploadFile;
+
+        private FileOutputStream groupUploadOutputStream;
+
+        private String groupUploadGroupName;
+
+        private String groupUploadFileName;
+
+        private String groupUploadTransferId;
+
+        private long groupUploadExpectedSize;
+
+        private long groupUploadReceivedSize;
+
+        private boolean groupFileUploadInProgress = false;
 
         private FileOutputStream uploadOutputStream;
 
@@ -101,6 +122,18 @@ public class WebSocketClientSession {
                                 && message.contains("\"type\":\"login\"")) {
 
                         handleLoginRequest(message);
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // GROUP FILE START REQUEST
+                // -----------------------------------------------------
+
+                if (message.startsWith("{")
+                                && message.contains("\"type\":\"group_file_start\"")) {
+
+                        handleGroupFileStart(message);
 
                         return;
                 }
@@ -337,11 +370,251 @@ public class WebSocketClientSession {
         }
 
         // =========================================================
+        // HANDLE GROUP FILE START
+        // =========================================================
+
+        private synchronized void handleGroupFileStart(
+                        String json) {
+
+                if (!authenticated.get()) {
+
+                        sendError(
+                                        "Not authenticated");
+
+                        return;
+                }
+
+                if (groupFileUploadInProgress) {
+
+                        sendGroupFileError(
+                                        "Another group file upload is already in progress.");
+
+                        return;
+                }
+
+                String groupName = extractJsonValue(
+                                json,
+                                "groupName");
+
+                String fileName = extractJsonValue(
+                                json,
+                                "fileName");
+
+                String fileSizeText = extractJsonNumber(
+                                json,
+                                "fileSize");
+
+                // -----------------------------------------------------
+                // Validate group name
+                // -----------------------------------------------------
+
+                if (groupName == null
+                                || groupName.trim().isEmpty()) {
+
+                        sendGroupFileError(
+                                        "Group name is required.");
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Validate file name
+                // -----------------------------------------------------
+
+                if (fileName == null
+                                || fileName.trim().isEmpty()) {
+
+                        sendGroupFileError(
+                                        "File name is required.");
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Validate file size
+                // -----------------------------------------------------
+
+                if (fileSizeText == null
+                                || fileSizeText.trim().isEmpty()) {
+
+                        sendGroupFileError(
+                                        "File size is required.");
+
+                        return;
+                }
+
+                long fileSize;
+
+                try {
+
+                        fileSize = Long.parseLong(
+                                        fileSizeText.trim());
+
+                } catch (NumberFormatException e) {
+
+                        sendGroupFileError(
+                                        "Invalid file size.");
+
+                        return;
+                }
+
+                if (fileSize <= 0) {
+
+                        sendGroupFileError(
+                                        "File cannot be empty.");
+
+                        return;
+                }
+
+                if (fileSize > MAX_FILE_SIZE) {
+
+                        sendGroupFileError(
+                                        "File is too large. Maximum size is 100 MB.");
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Prevent path traversal
+                // -----------------------------------------------------
+
+                String safeFileName;
+
+                try {
+
+                        safeFileName = Path.of(fileName)
+                                        .getFileName()
+                                        .toString();
+
+                } catch (Exception e) {
+
+                        sendGroupFileError(
+                                        "Invalid file name.");
+
+                        return;
+                }
+
+                if (safeFileName.isEmpty()) {
+
+                        sendGroupFileError(
+                                        "Invalid file name.");
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Create temporary upload file
+                // -----------------------------------------------------
+
+                try {
+
+                        Path uploadDirectory = Path.of(
+                                        System.getProperty(
+                                                        "java.io.tmpdir"),
+                                        "cloudchat-group-uploads");
+
+                        Files.createDirectories(
+                                        uploadDirectory);
+
+                        Path temporaryPath = Files.createTempFile(
+                                        uploadDirectory,
+                                        "cloudchat-group-",
+                                        "-" + safeFileName);
+
+                        groupUploadFile = temporaryPath.toFile();
+
+                        groupUploadOutputStream = new FileOutputStream(
+                                        groupUploadFile);
+
+                } catch (IOException e) {
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] "
+                                                        + "Unable to create temporary file: "
+                                                        + e.getMessage());
+
+                        sendGroupFileError(
+                                        "Unable to prepare group file upload.");
+
+                        cleanupGroupFileUpload();
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Store upload state
+                // -----------------------------------------------------
+
+                groupUploadGroupName = groupName.trim();
+
+                groupUploadFileName = safeFileName;
+
+                groupUploadExpectedSize = fileSize;
+
+                groupUploadReceivedSize = 0;
+
+                groupFileUploadInProgress = true;
+
+                groupUploadTransferId = UUID.randomUUID().toString();
+
+                System.out.println();
+                System.out.println(
+                                "[BRIDGE-GROUP-FILE] Upload started");
+
+                System.out.println(
+                                "[BRIDGE-GROUP-FILE] Sender: "
+                                                + username);
+
+                System.out.println(
+                                "[BRIDGE-GROUP-FILE] Group: "
+                                                + groupUploadGroupName);
+
+                System.out.println(
+                                "[BRIDGE-GROUP-FILE] File: "
+                                                + groupUploadFileName);
+
+                System.out.println(
+                                "[BRIDGE-GROUP-FILE] Expected size: "
+                                                + groupUploadExpectedSize);
+
+                // -----------------------------------------------------
+                // Notify React that upload has STARTED
+                // -----------------------------------------------------
+
+                sendJson(
+                                "{\"type\":\"group_file_upload_started\","
+                                                + "\"groupName\":\""
+                                                + escapeJson(groupUploadGroupName)
+                                                + "\","
+                                                + "\"fileName\":\""
+                                                + escapeJson(groupUploadFileName)
+                                                + "\","
+                                                + "\"fileSize\":"
+                                                + groupUploadExpectedSize
+                                                + "}");
+        }
+
+        // =========================================================
         // HANDLE BINARY FILE DATA FROM SENDER
         // =========================================================
 
         public synchronized void handleBinaryMessage(
                         ByteBuffer bytes) {
+
+                // -----------------------------------------------------
+                // GROUP FILE UPLOAD
+                // -----------------------------------------------------
+
+                if (groupFileUploadInProgress) {
+
+                        handleGroupFileBinaryData(bytes);
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // PRIVATE FILE UPLOAD
+                // -----------------------------------------------------
 
                 if (!fileUploadInProgress
                                 || uploadOutputStream == null) {
@@ -406,6 +679,76 @@ public class WebSocketClientSession {
                                         "Unable to save uploaded file.");
 
                         cleanupFileUpload();
+                }
+        }
+
+        // =========================================================
+        // HANDLE GROUP FILE BINARY DATA
+        // =========================================================
+
+        private synchronized void handleGroupFileBinaryData(
+                        ByteBuffer bytes) {
+
+                if (!groupFileUploadInProgress
+                                || groupUploadOutputStream == null) {
+
+                        sendGroupFileError(
+                                        "No group file upload is currently active.");
+
+                        return;
+                }
+
+                if (bytes == null) {
+
+                        sendGroupFileError(
+                                        "Empty binary data.");
+
+                        return;
+                }
+
+                int remaining = bytes.remaining();
+
+                if (remaining <= 0) {
+                        return;
+                }
+
+                if (groupUploadReceivedSize
+                                + remaining > groupUploadExpectedSize) {
+
+                        sendGroupFileError(
+                                        "Received more data than expected.");
+
+                        cleanupGroupFileUpload();
+
+                        return;
+                }
+
+                try {
+
+                        byte[] buffer = new byte[remaining];
+
+                        bytes.get(buffer);
+
+                        groupUploadOutputStream.write(
+                                        buffer);
+
+                        groupUploadReceivedSize += remaining;
+
+                        if (groupUploadReceivedSize == groupUploadExpectedSize) {
+
+                                finishGroupFileUpload();
+                        }
+
+                } catch (IOException e) {
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] File write failed: "
+                                                        + e.getMessage());
+
+                        sendGroupFileError(
+                                        "Unable to save uploaded group file.");
+
+                        cleanupGroupFileUpload();
                 }
         }
 
@@ -505,6 +848,195 @@ public class WebSocketClientSession {
                 // -----------------------------------------------------
 
                 resetFileUploadState();
+        }
+
+        // =========================================================
+        // FINISH GROUP FILE UPLOAD
+        // =========================================================
+
+        private synchronized void finishGroupFileUpload() {
+
+                try {
+
+                        if (groupUploadOutputStream != null) {
+
+                                groupUploadOutputStream.flush();
+
+                                groupUploadOutputStream.close();
+
+                                groupUploadOutputStream = null;
+                        }
+
+                        // -----------------------------------------------------
+                        // Validate uploaded file
+                        // -----------------------------------------------------
+
+                        if (groupUploadFile == null
+                                        || !groupUploadFile.exists()) {
+
+                                sendGroupFileError(
+                                                "Uploaded group file could not be found.");
+
+                                cleanupGroupFileUpload();
+
+                                return;
+                        }
+
+                        if (groupUploadFile.length() != groupUploadExpectedSize) {
+
+                                sendGroupFileError(
+                                                "Uploaded group file size does not match.");
+
+                                cleanupGroupFileUpload();
+
+                                return;
+                        }
+
+                        System.out.println();
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] Upload completed");
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] Sender: "
+                                                        + username);
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] Group: "
+                                                        + groupUploadGroupName);
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] File: "
+                                                        + groupUploadFile.getAbsolutePath());
+
+                        // -----------------------------------------------------
+                        // Send to backend
+                        // -----------------------------------------------------
+
+                        String backendCommand = "/groupfile "
+                                        + groupUploadGroupName
+                                        + " "
+                                        + groupUploadFile.getAbsolutePath();
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] Sending backend command: "
+                                                        + backendCommand);
+
+                        sendToBackend(backendCommand);
+
+                        // -----------------------------------------------------
+                        // Notify React that upload is complete
+                        // -----------------------------------------------------
+
+                        sendJson(
+                                        "{\"type\":\"group_file_upload_complete\","
+                                                        + "\"groupName\":\""
+                                                        + escapeJson(
+                                                                        groupUploadGroupName)
+                                                        + "\","
+                                                        + "\"fileName\":\""
+                                                        + escapeJson(
+                                                                        groupUploadFileName)
+                                                        + "\","
+                                                        + "\"fileSize\":"
+                                                        + groupUploadExpectedSize
+                                                        + "}");
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] Upload completion failed: "
+                                                        + e.getMessage());
+
+                        sendGroupFileError(
+                                        "Unable to process uploaded group file.");
+
+                        cleanupGroupFileUpload();
+
+                        return;
+                }
+
+                // -----------------------------------------------------
+                // Do NOT delete the temporary file here.
+                // ChatServer still needs it for group delivery.
+                // -----------------------------------------------------
+
+                resetGroupFileUploadState();
+        }
+
+        // =========================================================
+        // SEND GROUP FILE TO RECIPIENT BROWSER
+        // =========================================================
+
+        public synchronized void sendGroupFileToBrowser(
+                        String sender,
+                        String groupName,
+                        File file,
+                        String originalFileName,
+                        String transferId) throws IOException {
+
+                if (webSocket == null || !webSocket.isOpen()) {
+                        throw new IOException("Recipient WebSocket is not open.");
+                }
+
+                if (file == null || !file.exists() || !file.isFile()) {
+                        throw new IOException("Group file does not exist.");
+                }
+
+                if (groupName == null || groupName.trim().isEmpty()) {
+                        throw new IOException("Group name is empty.");
+                }
+
+                if (transferId == null || transferId.trim().isEmpty()) {
+                        throw new IOException("Group file transfer ID is missing.");
+                }
+
+                long fileSize = file.length();
+
+                String fileName = (originalFileName == null || originalFileName.trim().isEmpty())
+                                ? file.getName()
+                                : originalFileName.trim();
+
+                sendJson(
+                                "{\"type\":\"group_file_delivery_started\","
+                                                + "\"transferId\":\"" + escapeJson(transferId) + "\","
+                                                + "\"sender\":\"" + escapeJson(sender) + "\","
+                                                + "\"groupName\":\"" + escapeJson(groupName) + "\","
+                                                + "\"fileName\":\"" + escapeJson(fileName) + "\","
+                                                + "\"fileSize\":" + fileSize
+                                                + "}");
+
+                long totalSent = 0;
+
+                try (FileInputStream input = new FileInputStream(file)) {
+                        byte[] buffer = new byte[FILE_CHUNK_SIZE];
+                        int bytesRead;
+
+                        while ((bytesRead = input.read(buffer)) != -1) {
+                                if (webSocket == null || !webSocket.isOpen()) {
+                                        throw new IOException("Recipient WebSocket disconnected.");
+                                }
+
+                                byte[] chunk = new byte[bytesRead];
+                                System.arraycopy(buffer, 0, chunk, 0, bytesRead);
+
+                                webSocket.send(ByteBuffer.wrap(chunk));
+                                totalSent += bytesRead;
+                        }
+                }
+
+                sendJson(
+                                "{\"type\":\"group_file_delivery_complete\","
+                                                + "\"transferId\":\"" + escapeJson(transferId) + "\","
+                                                + "\"sender\":\"" + escapeJson(sender) + "\","
+                                                + "\"groupName\":\"" + escapeJson(groupName) + "\","
+                                                + "\"fileName\":\"" + escapeJson(fileName) + "\","
+                                                + "\"fileSize\":" + fileSize
+                                                + "}");
+
+                System.out.println(
+                                "[WS-GROUP-FILE] Transfer " + transferId
+                                                + " delivered to " + username
+                                                + " (" + totalSent + " bytes).");
         }
 
         // =========================================================
@@ -1427,10 +1959,12 @@ public class WebSocketClientSession {
                                 this);
 
                 // -----------------------------------------------------
-                // Clean unfinished upload
+                // Clean unfinished uploads
                 // -----------------------------------------------------
 
                 cleanupFileUpload();
+
+                cleanupGroupFileUpload();
 
                 // -----------------------------------------------------
                 // Close backend
@@ -1476,6 +2010,93 @@ public class WebSocketClientSession {
                 }
 
                 authenticated.set(false);
+        }
+
+        // =========================================================
+        // GROUP FILE ERROR
+        // =========================================================
+
+        private synchronized void sendGroupFileError(
+                        String message) {
+
+                sendJson(
+                                "{\"type\":\"group_file_upload_error\","
+                                                + "\"message\":\""
+                                                + escapeJson(message)
+                                                + "\"}");
+        }
+
+        // =========================================================
+        // CLEANUP GROUP FILE UPLOAD
+        // =========================================================
+
+        private synchronized void cleanupGroupFileUpload() {
+
+                try {
+
+                        if (groupUploadOutputStream != null) {
+
+                                groupUploadOutputStream.close();
+                        }
+
+                } catch (Exception ignored) {
+                }
+
+                groupUploadOutputStream = null;
+
+                deleteTemporaryGroupUpload();
+
+                resetGroupFileUploadState();
+        }
+
+        // =========================================================
+        // DELETE TEMPORARY GROUP UPLOAD
+        // =========================================================
+
+        private void deleteTemporaryGroupUpload() {
+
+                if (groupUploadFile == null) {
+                        return;
+                }
+
+                try {
+
+                        if (groupUploadFile.exists()) {
+
+                                boolean deleted = groupUploadFile.delete();
+
+                                System.out.println(
+                                                "[BRIDGE-GROUP-FILE] "
+                                                                + "Temporary file deleted: "
+                                                                + deleted);
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[BRIDGE-GROUP-FILE] "
+                                                        + "Unable to delete temporary file: "
+                                                        + e.getMessage());
+                }
+        }
+
+        // =========================================================
+        // RESET GROUP FILE UPLOAD STATE
+        // =========================================================
+
+        private void resetGroupFileUploadState() {
+
+                groupUploadFile = null;
+
+                groupUploadGroupName = null;
+
+                groupUploadFileName = null;
+
+                groupUploadExpectedSize = 0;
+
+                groupUploadReceivedSize = 0;
+
+                groupFileUploadInProgress = false;
         }
 
         // =========================================================

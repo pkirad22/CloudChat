@@ -25,6 +25,7 @@ import service.UserService;
 import service.ChatHistoryService;
 import service.GroupService;
 import service.OfflineFileService;
+import service.GroupFileHistoryService;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,6 +43,7 @@ public class ClientHandler implements Runnable {
         private PrintWriter output;
 
         private String username;
+        String transferId = java.util.UUID.randomUUID().toString();
 
         // =========================================================
         // REMOTE GROUP MEMBERSHIP
@@ -591,6 +593,11 @@ public class ClientHandler implements Runnable {
                                         continue;
                                 }
 
+                                if (message.startsWith("/searchgroups ")) {
+                                        handleSearchGroups(message);
+                                        continue;
+                                }
+
                                 // =================================================
                                 // GROUP OWNER MANAGEMENT
                                 // =================================================
@@ -650,6 +657,16 @@ public class ClientHandler implements Runnable {
 
                                 if (message.startsWith("/setaccess ")) {
                                         handleSetAccess(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/groupcode ")) {
+                                        handleGroupCode(message);
+                                        continue;
+                                }
+
+                                if (message.startsWith("/groupinfo ")) {
+                                        handleGroupInfo(message);
                                         continue;
                                 }
 
@@ -1214,10 +1231,53 @@ public class ClientHandler implements Runnable {
                                                 + file.length()
                                                 + " bytes");
 
+                String transferId = java.util.UUID.randomUUID().toString();
+
                 boolean started = ChatServer.sendGroupFile(
                                 username,
                                 groupName,
                                 file);
+
+                // =========================================================
+                // SAVE PERMANENT GROUP FILE HISTORY
+                // =========================================================
+
+                try {
+
+                        GroupFileHistoryService historyService = new GroupFileHistoryService();
+
+                        org.bson.Document savedRecord = historyService.saveGroupFile(
+                                        transferId,
+                                        username,
+                                        groupName,
+                                        file.getName(),
+                                        file);
+
+                        if (savedRecord == null) {
+
+                                sendMessage(
+                                                "SYSTEM: Could not save group file history.");
+
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[GROUP-FILE-HISTORY] Saved permanently: "
+                                                        + file.getName());
+
+                } catch (Exception e) {
+
+                        System.err.println(
+                                        "[GROUP-FILE-HISTORY] Failed to save file: "
+                                                        + e.getMessage());
+
+                        e.printStackTrace();
+
+                        sendMessage(
+                                        "SYSTEM: Could not save group file history.");
+
+                        return;
+                }
 
                 if (started) {
 
@@ -1302,6 +1362,181 @@ public class ClientHandler implements Runnable {
                 ChatServer.sendGroupMembers(
                                 groupName,
                                 this);
+        }
+
+        private void handleGroupCode(String message) {
+
+                String[] parts = message.split(" ", 2);
+
+                if (parts.length < 2) {
+
+                        sendMessage(
+                                        "SYSTEM: Invalid format.");
+
+                        sendMessage(
+                                        "SYSTEM: Use /groupcode groupname");
+
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                if (groupName.isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Group name cannot be empty.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // CHECK GROUP EXISTS
+                // -------------------------------------------------
+
+                if (!groupService.groupExists(groupName)) {
+
+                        sendMessage(
+                                        "SYSTEM: Group '"
+                                                        + groupName
+                                                        + "' does not exist.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // OWNER CHECK
+                // -------------------------------------------------
+
+                if (!requireGroupOwner(groupName)) {
+                        return;
+                }
+
+                // -------------------------------------------------
+                // GET JOIN CODE
+                // -------------------------------------------------
+
+                String joinCode = groupService.getJoinCode(groupName);
+
+                if (joinCode == null || joinCode.trim().isEmpty()) {
+
+                        sendMessage(
+                                        "SYSTEM: Join code is not available for group '"
+                                                        + groupName
+                                                        + "'.");
+
+                        return;
+                }
+
+                // -------------------------------------------------
+                // SEND CODE
+                // -------------------------------------------------
+
+                sendMessage(
+                                "GROUP_CODE:"
+                                                + groupName
+                                                + ":"
+                                                + joinCode);
+        }
+
+        private void handleGroupInfo(String message) {
+
+                String[] parts = message.split(" ", 2);
+
+                if (parts.length < 2) {
+                        sendMessage("SYSTEM: Invalid format.");
+                        sendMessage("SYSTEM: Use /groupinfo groupname");
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+
+                if (groupName.isEmpty()) {
+                        sendMessage("SYSTEM: Group name cannot be empty.");
+                        return;
+                }
+
+                if (!groupService.groupExists(groupName)) {
+                        sendMessage("SYSTEM: Group '" + groupName + "' does not exist.");
+                        return;
+                }
+
+                try {
+                        String accessMode = groupService.getAccessMode(groupName);
+
+                        if (accessMode == null || accessMode.trim().isEmpty()) {
+                                accessMode = "REQUEST";
+                        }
+
+                        boolean isOwner = groupService.isOwner(groupName, username);
+
+                        String joinCode = "";
+
+                        // Only expose the join code to the owner
+                        if (isOwner) {
+                                String code = groupService.getJoinCode(groupName);
+
+                                if (code != null) {
+                                        joinCode = code;
+                                }
+                        }
+
+                        int memberCount = groupService.getMembers(groupName).size();
+
+                        boolean isMember = groupService.getMembers(groupName).contains(username);
+
+                        sendMessage(
+                                        "GROUP_INFO:"
+                                                        + groupName
+                                                        + ":" + accessMode
+                                                        + ":" + joinCode
+                                                        + ":OWNER:" + (isOwner ? "1" : "0")
+                                                        + ":MEMBER:" + (isMember ? "1" : "0")
+                                                        + ":MEMBERS:" + memberCount);
+
+                } catch (Exception e) {
+                        System.out.println(
+                                        "[GROUP INFO] Failed for "
+                                                        + groupName
+                                                        + ": " + e.getMessage());
+
+                        sendMessage(
+                                        "SYSTEM: Unable to retrieve information for group '"
+                                                        + groupName + "'.");
+                }
+        }
+
+        private void handleSearchGroups(String message) {
+
+                String searchText = message
+                                .substring("/searchgroups ".length())
+                                .trim();
+
+                if (searchText.isEmpty()) {
+                        sendMessage("GROUP_SEARCH:");
+                        return;
+                }
+
+                try {
+
+                        List<String> results = groupService.searchGroups(searchText);
+
+                        StringBuilder response = new StringBuilder("GROUP_SEARCH:");
+
+                        for (String groupName : results) {
+                                response.append(groupName).append(",");
+                        }
+
+                        sendMessage(response.toString());
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[GROUP SEARCH] Failed: "
+                                                        + e.getMessage());
+
+                        sendMessage(
+                                        "SYSTEM: Unable to search groups.");
+                }
         }
 
         // =========================================================
@@ -1410,6 +1645,10 @@ public class ClientHandler implements Runnable {
                 String groupName = parts[1].trim();
                 String targetUser = parts[2].trim();
 
+                // =====================================================
+                // OWNER CHECK
+                // =====================================================
+
                 if (!requireGroupOwner(groupName)) {
                         return;
                 }
@@ -1421,6 +1660,10 @@ public class ClientHandler implements Runnable {
 
                         return;
                 }
+
+                // =====================================================
+                // CHECK MEMBERSHIP IN DATABASE
+                // =====================================================
 
                 if (!groupService.isMember(
                                 groupName,
@@ -1436,6 +1679,10 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
+                // =====================================================
+                // OWNER PROTECTION
+                // =====================================================
+
                 if (groupService.isOwner(
                                 groupName,
                                 targetUser)) {
@@ -1447,33 +1694,86 @@ public class ClientHandler implements Runnable {
                         return;
                 }
 
+                // =====================================================
+                // REMOVE FROM MONGODB
+                // =====================================================
+
                 boolean removed = groupService.removeMember(
                                 groupName,
                                 targetUser);
 
-                if (removed) {
+                if (!removed) {
 
-                        ChatServer.removePersistentGroupMember(
-                                        groupName,
-                                        targetUser);
+                        sendMessage(
+                                        "SYSTEM: Unable to remove user.");
+
+                        return;
+                }
+
+                // =====================================================
+                // UPDATE PERSISTENT IN-MEMORY MEMBERSHIP
+                // =====================================================
+
+                ChatServer.removeSyncedPersistentGroupMember(
+                                groupName,
+                                targetUser);
+
+                // =====================================================
+                // REMOVE FROM ACTIVE LOCAL GROUP
+                // =====================================================
+
+                ChatServer.removeLocalGroupMember(
+                                groupName,
+                                targetUser);
+
+                // =====================================================
+                // REMOVE FROM REMOTE GROUP TRACKING
+                // =====================================================
+
+                ChatServer.removeRemoteGroupMember(
+                                groupName,
+                                targetUser);
+
+                // =====================================================
+                // REMOVE REMOTE CLIENT SESSION MEMBERSHIP
+                // =====================================================
+
+                ClientHandler targetHandler = ChatServer.getOnlineUser(targetUser);
+
+                if (targetHandler != null) {
+
+                        targetHandler.removeRemoteGroup(
+                                        groupName);
+
+                        targetHandler.sendMessage(
+                                        "SYSTEM: You have been removed from group '"
+                                                        + groupName
+                                                        + "' by a group owner.");
+                }
+
+                // =====================================================
+                // SYNCHRONIZE WITH OTHER SERVER
+                // =====================================================
+
+                if (ChatServer.getServerSynchronizer() != null
+                                && ChatServer.getServerSynchronizer().isConnected()) {
 
                         ChatServer.getServerSynchronizer()
                                         .sendGroupMemberRemove(
                                                         groupName,
                                                         targetUser);
-
-                        sendMessage(
-                                        "SYSTEM: User '"
-                                                        + targetUser
-                                                        + "' removed from group '"
-                                                        + groupName
-                                                        + "'.");
-
-                } else {
-
-                        sendMessage(
-                                        "SYSTEM: Unable to remove user.");
                 }
+
+                // =====================================================
+                // SUCCESS
+                // =====================================================
+
+                sendMessage(
+                                "SYSTEM: User '"
+                                                + targetUser
+                                                + "' removed from group '"
+                                                + groupName
+                                                + "'.");
         }
 
         // =========================================================
@@ -1571,11 +1871,8 @@ public class ClientHandler implements Runnable {
                 String[] parts = message.split(" ", 3);
 
                 if (parts.length < 3) {
-
                         sendMessage("SYSTEM: Invalid format.");
-                        sendMessage(
-                                        "SYSTEM: Use /demote groupname username");
-
+                        sendMessage("SYSTEM: Use /demote groupname username");
                         return;
                 }
 
@@ -1587,36 +1884,24 @@ public class ClientHandler implements Runnable {
                 }
 
                 if (targetUser.isEmpty()) {
-
-                        sendMessage(
-                                        "SYSTEM: Username cannot be empty.");
-
+                        sendMessage("SYSTEM: Username cannot be empty.");
                         return;
                 }
 
-                if (!groupService.isOwner(
-                                groupName,
-                                targetUser)) {
-
+                // Make sure the target user is actually a member.
+                if (!groupService.isMember(groupName, targetUser)) {
                         sendMessage(
-                                        "SYSTEM: User '"
-                                                        + targetUser
+                                        "SYSTEM: User '" + targetUser
                                                         + "' is not a member of group '"
-                                                        + groupName
-                                                        + "'.");
-
+                                                        + groupName + "'.");
                         return;
                 }
 
-                if (!groupService.isOwner(
-                                groupName,
-                                targetUser)) {
-
+                // Make sure the target user is an owner.
+                if (!groupService.isOwner(groupName, targetUser)) {
                         sendMessage(
-                                        "SYSTEM: User '"
-                                                        + targetUser
+                                        "SYSTEM: User '" + targetUser
                                                         + "' is not an owner.");
-
                         return;
                 }
 
@@ -1629,18 +1914,15 @@ public class ClientHandler implements Runnable {
                         ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
 
                         if (synchronizer != null) {
-
                                 synchronizer.sendGroupOwnerRemove(
                                                 groupName,
                                                 targetUser);
                         }
 
                         sendMessage(
-                                        "SYSTEM: User '"
-                                                        + targetUser
+                                        "SYSTEM: User '" + targetUser
                                                         + "' is no longer an owner of group '"
-                                                        + groupName
-                                                        + "'.");
+                                                        + groupName + "'.");
 
                 } else {
 
@@ -2182,6 +2464,10 @@ public class ClientHandler implements Runnable {
                                         groupName,
                                         username);
 
+                        ChatServer.addLocalGroupMember(
+                                        groupName,
+                                        this);
+
                         // ---------------------------------------------
                         // SYNCHRONIZE OTHER SERVER
                         // ---------------------------------------------
@@ -2246,6 +2532,10 @@ public class ClientHandler implements Runnable {
                                         groupName,
                                         username);
 
+                        ChatServer.addLocalGroupMember(
+                                        groupName,
+                                        this);
+
                         // ---------------------------------------------
                         // SYNCHRONIZE OTHER SERVER
                         // ---------------------------------------------
@@ -2294,6 +2584,7 @@ public class ClientHandler implements Runnable {
                                                 + groupName
                                                 + "'.");
         }
+
         // =========================================================
         // SET GROUP ACCESS MODE
         // =========================================================
@@ -2375,6 +2666,15 @@ public class ClientHandler implements Runnable {
                                         "SYSTEM: Unable to change access mode.");
 
                         return;
+                }
+
+                ServerSynchronizer synchronizer = ChatServer.getServerSynchronizer();
+
+                if (synchronizer != null && synchronizer.isConnected()) {
+
+                        synchronizer.sendGroupAccessModeUpdate(
+                                        groupName,
+                                        accessMode);
                 }
 
                 sendMessage(
@@ -2768,7 +3068,8 @@ public class ClientHandler implements Runnable {
 
                 try {
 
-                        List<Document> pendingFiles = ChatServer.getOfflineGroupFileService()
+                        List<Document> pendingFiles = ChatServer
+                                        .getOfflineGroupFileService()
                                         .getPendingGroupFiles(username);
 
                         if (pendingFiles.isEmpty()) {
@@ -2794,79 +3095,124 @@ public class ClientHandler implements Runnable {
                         for (Document document : pendingFiles) {
 
                                 String sender = document.getString("sender");
-
                                 String groupName = document.getString("groupName");
-
                                 String fileName = document.getString("fileName");
 
-                                long fileSize = document.getLong("fileSize");
+                                Long storedFileSize = document.getLong("fileSize");
+
+                                if (sender == null
+                                                || groupName == null
+                                                || fileName == null
+                                                || storedFileSize == null) {
+
+                                        System.out.println(
+                                                        "[OFFLINE-GROUP-FILE] Invalid pending file record.");
+
+                                        continue;
+                                }
+
+                                long fileSize = storedFileSize;
 
                                 ObjectId gridFsFileId = document.getObjectId(
                                                 "gridFsFileId");
 
-                                // -------------------------------------------------
-                                // Create dynamic transfer port
-                                // -------------------------------------------------
+                                File tempFile = null;
 
-                                try (ServerSocket fileServerSocket = new ServerSocket(0)) {
+                                try {
 
-                                        int deliveryPort = fileServerSocket.getLocalPort();
+                                        // =========================================
+                                        // CREATE TEMP DIRECTORY
+                                        // =========================================
 
-                                        sendMessage(
-                                                        "OFFLINE_GROUP_FILE_READY:"
-                                                                        + groupName
-                                                                        + ":"
-                                                                        + sender
-                                                                        + ":"
-                                                                        + fileName
-                                                                        + ":"
-                                                                        + fileSize
-                                                                        + ":"
-                                                                        + deliveryPort);
+                                        File tempDirectory = new File(
+                                                        System.getProperty("java.io.tmpdir"),
+                                                        "cloudchat-offline-group-files");
+
+                                        if (!tempDirectory.exists()
+                                                        && !tempDirectory.mkdirs()) {
+
+                                                throw new IOException(
+                                                                "Unable to create temporary directory: "
+                                                                                + tempDirectory
+                                                                                                .getAbsolutePath());
+                                        }
+
+                                        // =========================================
+                                        // CREATE TEMP FILE
+                                        // =========================================
+
+                                        tempFile = File.createTempFile(
+                                                        "offline-group-file-",
+                                                        "-" + fileName,
+                                                        tempDirectory);
 
                                         System.out.println(
-                                                        "[OFFLINE-GROUP-FILE] "
-                                                                        + "Waiting for client connection on port "
-                                                                        + deliveryPort);
+                                                        "[OFFLINE-GROUP-FILE] Preparing: "
+                                                                        + fileName
+                                                                        + " | Group: "
+                                                                        + groupName
+                                                                        + " | Sender: "
+                                                                        + sender);
 
-                                        // -------------------------------------------------
-                                        // Wait for client to connect
-                                        // -------------------------------------------------
+                                        // =========================================
+                                        // DOWNLOAD FROM GRIDFS
+                                        // =========================================
 
-                                        try (Socket fileSocket = fileServerSocket.accept()) {
+                                        ChatServer.getOfflineGroupFileService()
+                                                        .downloadFile(
+                                                                        gridFsFileId,
+                                                                        tempFile);
+
+                                        // =========================================
+                                        // VERIFY DOWNLOADED FILE
+                                        // =========================================
+
+                                        if (!tempFile.exists()) {
 
                                                 System.out.println(
                                                                 "[OFFLINE-GROUP-FILE] "
-                                                                                + "Client connected for "
+                                                                                + "Temporary file does not exist: "
                                                                                 + fileName);
 
-                                                DataOutputStream outputStream = new DataOutputStream(
-                                                                fileSocket.getOutputStream());
+                                                continue;
+                                        }
 
-                                                // -------------------------------------------------
-                                                // Send file metadata
-                                                // -------------------------------------------------
-
-                                                outputStream.writeUTF(fileName);
-
-                                                outputStream.writeLong(fileSize);
-
-                                                outputStream.flush();
-
-                                                // -------------------------------------------------
-                                                // Stream file from GridFS
-                                                // -------------------------------------------------
-
-                                                ChatServer.getOfflineGroupFileService()
-                                                                .downloadFileToStream(
-                                                                                gridFsFileId,
-                                                                                outputStream);
-
-                                                outputStream.flush();
+                                        if (tempFile.length() != fileSize) {
 
                                                 System.out.println(
                                                                 "[OFFLINE-GROUP-FILE] "
-                                                                                + "Delivered: "
+                                                                                + "Downloaded file size mismatch: "
+                                                                                + fileName
+                                                                                + " | Expected: "
+                                                                                + fileSize
+                                                                                + " | Actual: "
+                                                                                + tempFile.length());
+
+                                                continue;
+                                        }
+
+                                        // =========================================
+                                        // DELIVER THROUGH EXISTING WEBSOCKET BRIDGE
+                                        // =========================================
+
+                                        boolean delivered = api.WebSocketBridgeServer
+                                                        .sendGroupFileToUser(
+                                                                        username,
+                                                                        sender,
+                                                                        groupName,
+                                                                        tempFile,
+                                                                        fileName,
+                                                                        transferId);
+
+                                        // =========================================
+                                        // DELETE PENDING RECORD ONLY AFTER SUCCESS
+                                        // =========================================
+
+                                        if (delivered) {
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "Delivered successfully: "
                                                                                 + sender
                                                                                 + " -> "
                                                                                 + username
@@ -2874,15 +3220,21 @@ public class ClientHandler implements Runnable {
                                                                                 + groupName
                                                                                 + "] "
                                                                                 + fileName);
+
+                                                ChatServer
+                                                                .getOfflineGroupFileService()
+                                                                .deletePendingGroupFile(
+                                                                                document.getObjectId(
+                                                                                                "_id"));
+
+                                        } else {
+
+                                                System.out.println(
+                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                + "WebSocket delivery failed. "
+                                                                                + "Keeping file pending: "
+                                                                                + fileName);
                                         }
-
-                                        // -------------------------------------------------
-                                        // Delete only after successful transfer
-                                        // -------------------------------------------------
-
-                                        ChatServer.getOfflineGroupFileService()
-                                                        .deletePendingGroupFile(
-                                                                        document.getObjectId("_id"));
 
                                 } catch (Exception e) {
 
@@ -2892,6 +3244,24 @@ public class ClientHandler implements Runnable {
                                                                         + fileName
                                                                         + ": "
                                                                         + e.getMessage());
+
+                                } finally {
+
+                                        // =========================================
+                                        // DELETE TEMP FILE
+                                        // =========================================
+
+                                        if (tempFile != null
+                                                        && tempFile.exists()) {
+
+                                                if (!tempFile.delete()) {
+
+                                                        System.out.println(
+                                                                        "[OFFLINE-GROUP-FILE] "
+                                                                                        + "Unable to delete temporary file: "
+                                                                                        + tempFile.getAbsolutePath());
+                                                }
+                                        }
                                 }
                         }
 

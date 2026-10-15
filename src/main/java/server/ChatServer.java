@@ -19,6 +19,7 @@ import model.FileTransferHistory;
 import service.FileTransferHistoryService;
 import service.GroupService;
 import service.OfflineGroupFileService;
+import java.util.UUID;
 
 public class ChatServer {
 
@@ -988,7 +989,8 @@ public class ChatServer {
                         String groupName,
                         String sender,
                         File file,
-                        GroupFileTransferTracker tracker) {
+                        GroupFileTransferTracker tracker,
+                        String transferId) {
 
                 if (groupName == null
                                 || groupName.trim().isEmpty()) {
@@ -1082,65 +1084,96 @@ public class ChatServer {
                                 "[GROUP-FILE] Starting group file delivery.");
 
                 System.out.println(
-                                "[GROUP-FILE] Group: " + groupName);
+                                "[GROUP-FILE] Group: "
+                                                + groupName);
 
                 System.out.println(
-                                "[GROUP-FILE] Sender: " + sender);
+                                "[GROUP-FILE] Sender: "
+                                                + sender);
 
                 System.out.println(
-                                "[GROUP-FILE] File: " + file.getName());
+                                "[GROUP-FILE] File: "
+                                                + file.getName());
 
                 System.out.println(
-                                "[GROUP-FILE] Recipients: " + recipients);
+                                "[GROUP-FILE] Recipients: "
+                                                + recipients);
 
                 // =========================================================
-                // START DELIVERY TO EACH LOCAL MEMBER
+                // DELIVER THROUGH WEBSOCKET BRIDGE
+                // =========================================================
+                //
+                // IMPORTANT:
+                //
+                // We no longer create GroupFileDeliveryServer here.
+                //
+                // WebSocketBridgeServer handles:
+                //
+                // LOCAL JVM
+                // -> userSessions
+                //
+                // REMOTE JVM
+                // -> internal REST bridge
+                //
+                // Both eventually use the SAME WebSocket connection
+                // already used by the React application.
+                //
                 // =========================================================
 
                 int deliveryCount = 0;
 
-                for (ClientHandler member : groupMembers) {
+                for (String recipient : recipients) {
 
-                        if (member == null) {
-                                continue;
+                        try {
+
+                                boolean delivered = api.WebSocketBridgeServer
+                                                .sendGroupFileToUser(
+                                                                recipient,
+                                                                sender,
+                                                                groupName,
+                                                                file,
+                                                                file.getName(),
+                                                                transferId);
+
+                                if (delivered) {
+
+                                        deliveryCount++;
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] Delivery started: "
+                                                                        + sender
+                                                                        + " -> "
+                                                                        + recipient);
+
+                                        // -------------------------------------------------
+                                        // Distributed transfer tracker
+                                        // -------------------------------------------------
+
+                                        if (tracker != null) {
+
+                                                tracker.deliveryCompleted(
+                                                                recipient);
+                                        }
+
+                                } else {
+
+                                        System.out.println(
+                                                        "[GROUP-FILE] Delivery failed: "
+                                                                        + sender
+                                                                        + " -> "
+                                                                        + recipient);
+                                }
+
+                        } catch (Exception e) {
+
+                                System.out.println(
+                                                "[GROUP-FILE] Delivery error for "
+                                                                + recipient
+                                                                + ": "
+                                                                + e.getMessage());
+
+                                e.printStackTrace();
                         }
-
-                        String recipient = member.getUsername();
-
-                        if (recipient == null
-                                        || recipient.trim().isEmpty()) {
-                                continue;
-                        }
-
-                        if (recipient.equals(sender)) {
-                                continue;
-                        }
-
-                        GroupFileDeliveryServer deliveryServer = new GroupFileDeliveryServer(
-                                        file,
-                                        sender,
-                                        groupName,
-                                        member,
-                                        tracker);
-
-                        Thread deliveryThread = new Thread(
-                                        deliveryServer,
-                                        "GroupFileDelivery-"
-                                                        + groupName
-                                                        + "-"
-                                                        + recipient
-                                                        + "-"
-                                                        + file.getName());
-
-                        deliveryThread.start();
-
-                        deliveryCount++;
-
-                        System.out.println(
-                                        "[GROUP-FILE] Delivery started: "
-                                                        + sender
-                                                        + " -> "
-                                                        + recipient);
                 }
 
                 // =========================================================
@@ -1148,13 +1181,11 @@ public class ChatServer {
                 // =========================================================
                 //
                 // tracker == null
-                // -> This is a normal LOCAL_GROUP transfer.
-                // Save history here.
+                // -> Normal LOCAL_GROUP transfer.
                 //
                 // tracker != null
-                // -> This is a DISTRIBUTED_GROUP transfer.
-                // The tracker will save history only after
-                // all expected recipients finish receiving.
+                // -> DISTRIBUTED_GROUP transfer.
+                // Tracker handles history.
                 //
                 // =========================================================
 
@@ -1225,7 +1256,6 @@ public class ChatServer {
                                         "[GROUP-FILE-HISTORY] "
                                                         + "History will be saved by the "
                                                         + "distributed transfer tracker.");
-
                 }
 
                 // =========================================================
@@ -1584,16 +1614,27 @@ public class ChatServer {
                         return false;
                 }
 
+                sender = sender.trim();
                 groupName = groupName.trim();
 
-                if (groupName.isEmpty()
+                if (sender.isEmpty()
+                                || groupName.isEmpty()
                                 || !file.exists()
                                 || !file.isFile()) {
 
                         return false;
                 }
 
+                // Generate one unique ID for this group-file upload.
+                String transferId = UUID.randomUUID().toString();
+
+                System.out.println(
+                                "[GROUP-FILE] Transfer ID: " + transferId);
+
                 System.out.println();
+                System.out.println(
+                                "[GROUP-FILE] =================================");
+
                 System.out.println(
                                 "[GROUP-FILE] Starting group file transfer.");
 
@@ -1614,192 +1655,447 @@ public class ChatServer {
                                                 + file.length()
                                                 + " bytes");
 
-                // =====================================================
-                // COLLECT LOCAL GROUP RECIPIENTS
-                // =====================================================
+                // =========================================================
+                // CHECK WHETHER THIS IS A LOCAL GROUP
+                // =========================================================
 
-                List<String> localRecipients = new java.util.ArrayList<>();
+                Set<ClientHandler> localGroupMembers = groups.get(groupName);
 
-                // =====================================================
-                // LOCAL GROUP MEMBERS
-                // =====================================================
+                boolean isLocalGroup = localGroupMembers != null;
 
-                Set<ClientHandler> localMembers = groups.get(groupName);
+                // =========================================================
+                // CASE 1:
+                // GROUP IS LOCAL TO THIS SERVER
+                // =========================================================
 
-                if (localMembers != null) {
+                if (isLocalGroup) {
 
-                        for (ClientHandler member : localMembers) {
+                        System.out.println(
+                                        "[GROUP-FILE] Group is LOCAL to this server.");
+
+                        // =====================================================
+                        // LOCAL ONLINE RECIPIENTS
+                        // =====================================================
+
+                        List<String> localOnlineRecipients = new ArrayList<>();
+
+                        for (ClientHandler member : localGroupMembers) {
 
                                 if (member == null
                                                 || member.getUsername() == null) {
+
                                         continue;
                                 }
 
-                                String recipient = member.getUsername();
+                                String recipient = member.getUsername().trim();
+
+                                if (recipient.isEmpty()) {
+                                        continue;
+                                }
+
+                                // -------------------------------------------------
+                                // NEVER SEND TO SENDER
+                                // -------------------------------------------------
 
                                 if (recipient.equals(sender)) {
                                         continue;
                                 }
 
+                                // -------------------------------------------------
+                                // Verify that this user is actually online locally
+                                // -------------------------------------------------
+
                                 ClientHandler actualLocalUser = onlineUsers.get(recipient);
 
                                 if (actualLocalUser == null) {
+                                        continue;
+                                }
+
+                                localOnlineRecipients.add(
+                                                recipient);
+                        }
+
+                        // =====================================================
+                        // REMOTE MEMBERS
+                        // =====================================================
+                        //
+                        // remoteGroupMembers contains members that belong
+                        // to the OTHER CloudChat server.
+                        //
+                        // IMPORTANT:
+                        //
+                        // We intentionally DO NOT use persistentGroupMembers
+                        // to determine remote users because persistent membership
+                        // is shared across both servers.
+                        //
+                        // =====================================================
+
+                        Set<String> remoteRecipients = ConcurrentHashMap.newKeySet();
+
+                        Set<String> synchronizedRemoteMembers = remoteGroupMembers.get(groupName);
+
+                        if (synchronizedRemoteMembers != null) {
+
+                                for (String username : synchronizedRemoteMembers) {
+
+                                        if (username == null
+                                                        || username.trim().isEmpty()) {
+
+                                                continue;
+                                        }
+
+                                        username = username.trim();
+
+                                        if (username.equals(sender)) {
+                                                continue;
+                                        }
+
+                                        remoteRecipients.add(
+                                                        username);
+                                }
+                        }
+
+                        // -----------------------------------------------------
+                        // Remove local users from remote set as a safety check
+                        // -----------------------------------------------------
+
+                        remoteRecipients.removeAll(
+                                        localOnlineRecipients);
+
+                        // Sender can NEVER be a recipient.
+                        remoteRecipients.remove(sender);
+
+                        // =====================================================
+                        // LOCAL OFFLINE MEMBERS
+                        // =====================================================
+                        //
+                        // For a LOCAL group:
+                        //
+                        // persistent members
+                        // -
+                        // remote members
+                        // -
+                        // local online members
+                        // -
+                        // sender
+                        //
+                        // = local offline members
+                        //
+                        // =====================================================
+
+                        List<String> localOfflineRecipients = new ArrayList<>();
+
+                        Set<String> persistentMembers = persistentGroupMembers.get(groupName);
+
+                        if (persistentMembers != null) {
+
+                                for (String username : persistentMembers) {
+
+                                        if (username == null
+                                                        || username.trim().isEmpty()) {
+
+                                                continue;
+                                        }
+
+                                        username = username.trim();
+
+                                        // -------------------------------------------------
+                                        // Sender
+                                        // -------------------------------------------------
+
+                                        if (username.equals(sender)) {
+                                                continue;
+                                        }
+
+                                        // -------------------------------------------------
+                                        // Member belongs to OTHER server
+                                        // -------------------------------------------------
+
+                                        if (remoteRecipients.contains(username)) {
+                                                continue;
+                                        }
+
+                                        // -------------------------------------------------
+                                        // Already online locally
+                                        // -------------------------------------------------
+
+                                        if (onlineUsers.containsKey(username)) {
+                                                continue;
+                                        }
+
+                                        localOfflineRecipients.add(
+                                                        username);
+                                }
+                        }
+
+                        // =====================================================
+                        // LOG ROUTING
+                        // =====================================================
+
+                        System.out.println(
+                                        "[GROUP-FILE] Local online recipients: "
+                                                        + localOnlineRecipients);
+
+                        System.out.println(
+                                        "[GROUP-FILE] Local offline recipients: "
+                                                        + localOfflineRecipients);
+
+                        System.out.println(
+                                        "[GROUP-FILE] Remote recipients: "
+                                                        + remoteRecipients);
+
+                        // =====================================================
+                        // QUEUE LOCAL OFFLINE MEMBERS
+                        // =====================================================
+
+                        if (!localOfflineRecipients.isEmpty()) {
+
+                                if (offlineGroupFileService == null) {
 
                                         System.out.println(
-                                                        "[GROUP-FILE] "
-                                                                        + recipient
-                                                                        + " is not local. "
-                                                                        + "Skipping local delivery.");
+                                                        "[OFFLINE-GROUP-FILE] "
+                                                                        + "Service is not initialized.");
 
+                                } else {
+
+                                        for (String recipient : localOfflineRecipients) {
+
+                                                try {
+
+                                                        boolean saved = offlineGroupFileService
+                                                                        .savePendingGroupFile(
+                                                                                        sender,
+                                                                                        recipient,
+                                                                                        groupName,
+                                                                                        file);
+
+                                                        if (saved) {
+
+                                                                System.out.println(
+                                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                                + "Queued: "
+                                                                                                + sender
+                                                                                                + " -> "
+                                                                                                + recipient
+                                                                                                + " ["
+                                                                                                + groupName
+                                                                                                + "]");
+
+                                                        } else {
+
+                                                                System.out.println(
+                                                                                "[OFFLINE-GROUP-FILE] "
+                                                                                                + "Failed to queue: "
+                                                                                                + recipient);
+                                                        }
+
+                                                } catch (Exception e) {
+
+                                                        System.out.println(
+                                                                        "[OFFLINE-GROUP-FILE] "
+                                                                                        + "Error queueing file for "
+                                                                                        + recipient
+                                                                                        + ": "
+                                                                                        + e.getMessage());
+                                                }
+                                        }
+                                }
+                        }
+
+                        // =====================================================
+                        // LOCAL ONLINE DELIVERY
+                        // =====================================================
+
+                        GroupFileTransferTracker tracker = null;
+
+                        if (!localOnlineRecipients.isEmpty()
+                                        && remoteRecipients.isEmpty()) {
+
+                                tracker = new GroupFileTransferTracker(
+                                                sender,
+                                                groupName,
+                                                file,
+                                                localOnlineRecipients);
+                        }
+
+                        for (String recipient : localOnlineRecipients) {
+
+                                ClientHandler recipientHandler = onlineUsers.get(recipient);
+
+                                if (recipientHandler == null) {
                                         continue;
                                 }
+
+                                startLocalGroupFileDelivery(
+                                                file,
+                                                sender,
+                                                groupName,
+                                                recipient,
+                                                recipientHandler,
+                                                tracker,
+                                                transferId);
+                        }
+
+                        // =====================================================
+                        // REMOTE SERVER DELIVERY
+                        // =====================================================
+
+                        if (!remoteRecipients.isEmpty()) {
 
                                 System.out.println(
-                                                "[GROUP-FILE] Local recipient: "
-                                                                + recipient);
+                                                "[GROUP-FILE] "
+                                                                + "Routing file to remote server.");
 
-                                localRecipients.add(recipient);
+                                System.out.println(
+                                                "[GROUP-FILE] Remote recipients: "
+                                                                + remoteRecipients);
+
+                                startRemoteGroupFileTransfer(
+                                                file,
+                                                sender,
+                                                groupName,
+                                                remoteRecipients,
+                                                remoteRecipients,
+                                                transferId);
+
+                        } else {
+
+                                System.out.println(
+                                                "[GROUP-FILE] "
+                                                                + "No remote recipients.");
                         }
+
+                        // =====================================================
+                        // CHECK WHETHER ANY RECIPIENT EXISTS
+                        // =====================================================
+
+                        if (localOnlineRecipients.isEmpty()
+                                        && localOfflineRecipients.isEmpty()
+                                        && remoteRecipients.isEmpty()) {
+
+                                System.out.println(
+                                                "[GROUP-FILE] "
+                                                                + "No group recipients found.");
+
+                                return false;
+                        }
+
+                        System.out.println(
+                                        "[GROUP-FILE] "
+                                                        + "Local group file routing completed.");
+
+                        System.out.println(
+                                        "[GROUP-FILE] =================================");
+
+                        return true;
                 }
 
-                // =====================================================
-                // REMOTE GROUP MEMBERS
-                // =====================================================
-
-                Set<String> remoteMembers = ConcurrentHashMap.newKeySet();
-
-                // -----------------------------------------------------
-                // First use synchronized remote membership
-                // -----------------------------------------------------
-
-                Set<String> synchronizedRemoteMembers = remoteGroupMembers.get(groupName);
-
-                if (synchronizedRemoteMembers != null) {
-
-                        remoteMembers.addAll(
-                                        synchronizedRemoteMembers);
-                }
-
-                // -----------------------------------------------------
-                // Fallback to persistent membership
+                // =========================================================
+                // CASE 2:
+                // GROUP IS REMOTE TO THIS SERVER
+                // =========================================================
                 //
-                // MongoDB contains the complete group membership.
-                // Any member who is NOT actually connected to this
-                // server can be treated as a remote candidate.
-                // -----------------------------------------------------
+                // The current sender is connected to this server but the
+                // group itself is hosted by the other server.
+                //
+                // We MUST NOT attempt to determine the remote server's
+                // complete membership from persistentGroupMembers because
+                // MongoDB contains members from BOTH servers.
+                //
+                // Instead, send the file to the other server.
+                //
+                // The receiving DistributedGroupFileTransferReceiver will
+                // determine its own local online/offline members.
+                //
+                // =========================================================
 
-                Set<String> persistentMembers = persistentGroupMembers.get(groupName);
-
-                if (persistentMembers != null) {
-
-                        for (String username : persistentMembers) {
-
-                                if (username == null
-                                                || username.trim().isEmpty()) {
-
-                                        continue;
-                                }
-
-                                username = username.trim();
-
-                                // Do not route the sender
-                                if (username.equals(sender)) {
-                                        continue;
-                                }
-
-                                // If user is actually connected to THIS server,
-                                // local delivery already handles them.
-                                if (onlineUsers.containsKey(username)) {
-                                        continue;
-                                }
-
-                                remoteMembers.add(username);
-                        }
-                }
-
-                // -----------------------------------------------------
-                // Remove sender just to be safe
-                // -----------------------------------------------------
-
-                remoteMembers.remove(sender);
-
-                // =====================================================
-                // START LOCAL GROUP DELIVERIES
-                // =====================================================
-
-                GroupFileTransferTracker tracker = null;
-
-                // LOCAL_GROUP means there are local recipients
-                // and NO remote recipients.
-                if (!localRecipients.isEmpty()
-                                && remoteMembers.isEmpty()) {
-
-                        tracker = new GroupFileTransferTracker(
-                                        sender,
-                                        groupName,
-                                        file,
-                                        localRecipients);
-
-                        System.out.println();
-                        System.out.println(
-                                        "[GROUP-FILE-HISTORY] "
-                                                        + "Local group transfer detected.");
+                if (senderIsRemoteGroupMember(
+                                groupName,
+                                sender)) {
 
                         System.out.println(
-                                        "[GROUP-FILE-HISTORY] Recipients: "
-                                                        + localRecipients);
-                }
+                                        "[GROUP-FILE] Group is REMOTE to this server.");
 
-                // Start local deliveries
-                for (String recipient : localRecipients) {
+                        System.out.println(
+                                        "[GROUP-FILE] Routing complete file to remote server.");
 
-                        ClientHandler recipientHandler = onlineUsers.get(recipient);
+                        if (serverSynchronizer == null
+                                        || !serverSynchronizer.isConnected()) {
 
-                        if (recipientHandler == null) {
-                                continue;
+                                System.out.println(
+                                                "[GROUP-FILE] "
+                                                                + "Remote server is unavailable.");
+
+                                return false;
                         }
 
-                        startLocalGroupFileDelivery(
-                                        file,
-                                        sender,
-                                        recipient,
-                                        recipientHandler,
-                                        tracker);
-                }
+                        // -----------------------------------------------------
+                        // No need to guess remote recipients here.
+                        //
+                        // The destination server determines its own local
+                        // members from its persistent + remote membership state.
+                        // -----------------------------------------------------
 
-                // -----------------------------------------------------
-                // Send file to remote server
-                // -----------------------------------------------------
+                        Set<String> remoteRouteRecipients = ConcurrentHashMap.newKeySet();
 
-                if (!remoteMembers.isEmpty()) {
-
-                        System.out.println(
-                                        "[GROUP-FILE] Remote group members: "
-                                                        + remoteMembers);
-
-                        java.util.Set<String> allRecipients = java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-                        allRecipients.addAll(localRecipients);
-                        allRecipients.addAll(remoteMembers);
+                        // Sender must never be included.
+                        remoteRouteRecipients.remove(sender);
 
                         startRemoteGroupFileTransfer(
                                         file,
                                         sender,
                                         groupName,
-                                        remoteMembers,
-                                        allRecipients);
-                } else {
+                                        remoteRouteRecipients,
+                                        remoteRouteRecipients,
+                                        transferId);
 
                         System.out.println(
-                                        "[GROUP-FILE] No remote group members "
-                                                        + "found.");
+                                        "[GROUP-FILE] "
+                                                        + "Remote group file route started.");
+
+                        System.out.println(
+                                        "[GROUP-FILE] =================================");
+
+                        return true;
                 }
 
-                // =====================================================
-                // SUCCESS
-                // =====================================================
+                // =========================================================
+                // CASE 3:
+                // GROUP DOES NOT BELONG TO THIS CLIENT
+                // =========================================================
 
-                return true;
+                System.out.println(
+                                "[GROUP-FILE] "
+                                                + "Sender is not a member of group: "
+                                                + groupName);
+
+                return false;
+        }
+
+        // =========================================================
+        // CHECK WHETHER USER IS A REMOTE GROUP MEMBER
+        // =========================================================
+
+        private static boolean senderIsRemoteGroupMember(
+                        String groupName,
+                        String username) {
+
+                if (groupName == null
+                                || username == null
+                                || groupName.trim().isEmpty()
+                                || username.trim().isEmpty()) {
+
+                        return false;
+                }
+
+                ClientHandler client = onlineUsers.get(username.trim());
+
+                if (client == null) {
+                        return false;
+                }
+
+                return client.isRemoteGroupMember(
+                                groupName.trim());
         }
 
         // =========================================================
@@ -1809,39 +2105,43 @@ public class ChatServer {
         private static void startLocalGroupFileDelivery(
                         java.io.File file,
                         String sender,
+                        String groupName,
                         String recipient,
                         ClientHandler recipientHandler,
-                        GroupFileTransferTracker tracker) {
+                        GroupFileTransferTracker tracker,
+                        String transferId) {
 
                 try {
+                        boolean delivered = api.WebSocketBridgeServer
+                                        .sendGroupFileToUser(
+                                                        recipient,
+                                                        sender,
+                                                        groupName,
+                                                        file,
+                                                        file.getName(),
+                                                        transferId);
 
-                        DistributedFileDeliveryServer deliveryServer = new DistributedFileDeliveryServer(
-                                        file,
-                                        sender,
-                                        recipient,
-                                        recipientHandler,
-                                        tracker);
+                        if (delivered) {
+                                System.out.println(
+                                                "[GROUP-FILE] Local WebSocket delivery started: "
+                                                                + sender + " -> " + recipient
+                                                                + " | Transfer ID: " + transferId);
 
-                        Thread deliveryThread = new Thread(
-                                        deliveryServer,
-                                        "GroupFileDelivery-"
-                                                        + recipient
-                                                        + "-"
-                                                        + file.getName());
-
-                        deliveryThread.start();
-
-                        System.out.println(
-                                        "[GROUP-FILE] Local delivery started: "
-                                                        + sender
-                                                        + " -> "
-                                                        + recipient);
+                                if (tracker != null) {
+                                        tracker.deliveryCompleted(recipient);
+                                }
+                        } else {
+                                System.out.println(
+                                                "[GROUP-FILE] WebSocket delivery failed: "
+                                                                + sender + " -> " + recipient);
+                        }
 
                 } catch (Exception e) {
-
                         System.out.println(
-                                        "[GROUP-FILE] Local delivery error: "
-                                                        + e.getMessage());
+                                        "[GROUP-FILE] Local delivery error for "
+                                                        + recipient + ": " + e.getMessage());
+
+                        e.printStackTrace();
                 }
         }
         // =========================================================
@@ -1853,7 +2153,8 @@ public class ChatServer {
                         String sender,
                         String groupName,
                         Set<String> remoteMembers,
-                        java.util.Set<String> allRecipients) {
+                        java.util.Set<String> allRecipients,
+                        String transferId) {
 
                 if (serverSynchronizer == null
                                 || !serverSynchronizer.isConnected()) {
@@ -1869,7 +2170,8 @@ public class ChatServer {
                         DistributedGroupFileTransferServer transferServer = new DistributedGroupFileTransferServer(
                                         file,
                                         sender,
-                                        groupName);
+                                        groupName,
+                                        transferId);
 
                         Thread transferThread = new Thread(
                                         transferServer,
@@ -1901,7 +2203,8 @@ public class ChatServer {
                                         file.getName(),
                                         file.length(),
                                         transferPort,
-                                        allRecipients);
+                                        allRecipients,
+                                        transferId);
 
                         System.out.println(
                                         "[GROUP-FILE] Group file route sent: "
@@ -1942,47 +2245,26 @@ public class ChatServer {
         // GROUP LIST
         // =========================================================
 
-        public static void sendGroupList(
-                        ClientHandler requester) {
+        public static void sendGroupList(ClientHandler requester) {
 
                 StringBuilder groupList = new StringBuilder("GROUPS:");
 
-                Set<String> allGroups = ConcurrentHashMap.newKeySet();
+                try {
 
-                // -----------------------------------------------------
-                // Local groups currently in memory
-                // -----------------------------------------------------
+                        List<String> userGroups = groupService.getGroupsForUser(requester.getUsername());
 
-                allGroups.addAll(
-                                groups.keySet());
+                        for (String groupName : userGroups) {
+                                groupList.append(groupName).append(",");
+                        }
 
-                // -----------------------------------------------------
-                // Remote groups
-                // -----------------------------------------------------
+                } catch (Exception e) {
 
-                allGroups.addAll(
-                                remoteGroupMembers.keySet());
-
-                // -----------------------------------------------------
-                // Groups restored from MongoDB
-                // -----------------------------------------------------
-
-                allGroups.addAll(
-                                persistentGroupMembers.keySet());
-
-                // -----------------------------------------------------
-                // Build response
-                // -----------------------------------------------------
-
-                for (String groupName : allGroups) {
-
-                        groupList
-                                        .append(groupName)
-                                        .append(",");
+                        System.out.println(
+                                        "[GROUPS] Failed to get user groups: "
+                                                        + e.getMessage());
                 }
 
-                requester.sendMessage(
-                                groupList.toString());
+                requester.sendMessage(groupList.toString());
         }
 
         // =========================================================
@@ -2081,7 +2363,7 @@ public class ChatServer {
                 }
 
                 // -----------------------------------------------------
-                // SEND RESULT
+                // SEND MEMBERS WITH THEIR ACTUAL ROLE
                 // -----------------------------------------------------
 
                 StringBuilder membersList = new StringBuilder(
@@ -2089,15 +2371,36 @@ public class ChatServer {
                                                 + groupName
                                                 + "]: ");
 
-                for (String username : allMembers) {
+                boolean firstMember = true;
+
+                for (String memberUsername : allMembers) {
+
+                        if (memberUsername == null
+                                        || memberUsername.trim().isEmpty()) {
+
+                                continue;
+                        }
+
+                        memberUsername = memberUsername.trim();
+
+                        boolean isOwner = groupService.isOwner(
+                                        groupName,
+                                        memberUsername);
+
+                        if (!firstMember) {
+                                membersList.append(",");
+                        }
 
                         membersList
-                                        .append(username)
-                                        .append(" ");
+                                        .append(memberUsername)
+                                        .append(":")
+                                        .append(isOwner ? "OWNER" : "MEMBER");
+
+                        firstMember = false;
                 }
 
                 requester.sendMessage(
-                                membersList.toString().trim());
+                                membersList.toString());
         }
 
         // =========================================================
@@ -2114,6 +2417,16 @@ public class ChatServer {
                         return false;
                 }
 
+                groupName = groupName.trim();
+
+                if (groupName.isEmpty()) {
+                        return false;
+                }
+
+                // =====================================================
+                // 1. LOCAL ONLINE MEMBERSHIP
+                // =====================================================
+
                 Set<ClientHandler> members = groups.get(groupName);
 
                 if (members != null
@@ -2122,8 +2435,31 @@ public class ChatServer {
                         return true;
                 }
 
-                return client.isRemoteGroupMember(
-                                groupName);
+                // =====================================================
+                // 2. REMOTE ONLINE MEMBERSHIP
+                // =====================================================
+
+                if (client.isRemoteGroupMember(groupName)) {
+                        return true;
+                }
+
+                // =====================================================
+                // 3. PERSISTENT DISTRIBUTED MEMBERSHIP
+                //
+                // This is important when the user is connected to
+                // another CloudChat server.
+                // =====================================================
+
+                Set<String> persistentMembers = persistentGroupMembers.get(groupName);
+
+                if (persistentMembers != null
+                                && persistentMembers.contains(
+                                                client.getUsername())) {
+
+                        return true;
+                }
+
+                return false;
         }
 
         // =========================================================
@@ -2324,6 +2660,31 @@ public class ChatServer {
                 System.out.println(
                                 "[SYNC] Persistent group member added: "
                                                 + username
+                                                + " -> "
+                                                + groupName);
+        }
+
+        public static void addLocalGroupMember(
+                        String groupName,
+                        ClientHandler client) {
+
+                if (groupName == null || client == null) {
+                        return;
+                }
+
+                groupName = groupName.trim();
+
+                if (groupName.isEmpty()) {
+                        return;
+                }
+
+                groups.computeIfAbsent(
+                                groupName,
+                                k -> ConcurrentHashMap.newKeySet()).add(client);
+
+                System.out.println(
+                                "[GROUP] Local member added: "
+                                                + client.getUsername()
                                                 + " -> "
                                                 + groupName);
         }
@@ -2596,6 +2957,69 @@ public class ChatServer {
         }
 
         // =========================================================
+        // REMOVE USER FROM ACTIVE LOCAL GROUP
+        // =========================================================
+
+        public static boolean removeLocalGroupMember(
+                        String groupName,
+                        String username) {
+
+                if (groupName == null
+                                || username == null
+                                || groupName.trim().isEmpty()
+                                || username.trim().isEmpty()) {
+
+                        return false;
+                }
+
+                groupName = groupName.trim();
+                username = username.trim();
+
+                Set<ClientHandler> members = groups.get(groupName);
+
+                if (members == null) {
+
+                        System.out.println(
+                                        "[GROUP] Local group not found: "
+                                                        + groupName);
+
+                        return false;
+                }
+
+                ClientHandler targetHandler = onlineUsers.get(username);
+
+                if (targetHandler == null) {
+
+                        System.out.println(
+                                        "[GROUP] User "
+                                                        + username
+                                                        + " is not currently online.");
+
+                        return false;
+                }
+
+                boolean removed = members.remove(targetHandler);
+
+                if (removed) {
+
+                        System.out.println(
+                                        "[GROUP] Active member removed: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+                } else {
+
+                        System.out.println(
+                                        "[GROUP] Active member was not present: "
+                                                        + username
+                                                        + " -> "
+                                                        + groupName);
+                }
+
+                return removed;
+        }
+
+        // =========================================================
         // REMOTE GROUP DELETED
         // =========================================================
 
@@ -2721,6 +3145,38 @@ public class ChatServer {
 
                 Set<String> members = remoteGroupMembers.get(
                                 groupName);
+
+                if (members == null) {
+
+                        return Set.of();
+                }
+
+                return Set.copyOf(members);
+        }
+
+        // =========================================================
+        // GET PERSISTENT GROUP MEMBERS
+        // =========================================================
+        //
+        // Returns the complete MongoDB-backed membership list for
+        // the specified group.
+        //
+        // This is used by distributed group-file delivery to determine
+        // which users are members of the group, including offline users.
+        //
+        // =========================================================
+
+        public static Set<String> getPersistentGroupMembers(
+                        String groupName) {
+
+                if (groupName == null
+                                || groupName.trim().isEmpty()) {
+
+                        return Set.of();
+                }
+
+                Set<String> members = persistentGroupMembers.get(
+                                groupName.trim());
 
                 if (members == null) {
 

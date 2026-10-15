@@ -1,24 +1,6 @@
-// =========================================================
-// CLOUDCHAT RECEIVED FILE STORE
-// =========================================================
-//
-// Stores received files in IndexedDB so they survive:
-//
-// - Chat page navigation
-// - browser refresh
-// - logout
-// - login again
-// - closing/reopening the Chat page
-//
-// The actual Blob is stored, not a temporary blob URL.
-// =========================================================
-
 const DB_NAME = "CloudChatFiles";
-
 const DB_VERSION = 1;
-
 const STORE_NAME = "receivedFiles";
-
 const MAX_STORED_FILES = 100;
 
 // =========================================================
@@ -47,9 +29,7 @@ function openDatabase() {
       }
     };
 
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
+    request.onsuccess = () => resolve(request.result);
 
     request.onerror = () => {
       reject(
@@ -60,7 +40,7 @@ function openDatabase() {
 }
 
 // =========================================================
-// GENERATE FILE ID
+// HELPERS
 // =========================================================
 
 function createFileId() {
@@ -71,36 +51,55 @@ function createFileId() {
     return crypto.randomUUID();
   }
 
-  return `file-${Date.now()}-` + `${Math.random().toString(36).slice(2)}`;
+  return `file-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// =========================================================
-// NORMALIZE STORED FILE NAME
-// =========================================================
-
 function normalizeFileName(fileName) {
-  if (!fileName) {
-    return "";
-  }
+  if (!fileName) return "";
 
-  return fileName
+  return String(fileName)
     .replace(/^temp_\d+_/, "")
     .replace(/^cloudchat-\d+(?:-\d+)*[-_]/, "");
 }
 
-// =========================================================
-// SAVE RECEIVED FILE
-// =========================================================
+function sortByReceivedAt(files) {
+  return files.sort(
+    (a, b) =>
+      new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime(),
+  );
+}
+
+function getAllRecords(database) {
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const request = transaction.objectStore(STORE_NAME).getAll();
+
+    request.onsuccess = () => resolve(request.result || []);
+
+    request.onerror = () => {
+      reject(request.error || new Error("Unable to read stored files."));
+    };
+  });
+}
 
 // =========================================================
-// SAVE FILE
+// SAVE RECEIVED FILE
+//
+// Supports:
+// - Private files
+// - Group files
+// - Stable transfer-ID deduplication
+// - Existing private-file callers
 // =========================================================
 
 export async function saveReceivedFile({
+  id = null,
+  transferId = null,
   sender,
   recipient,
   owner = null,
   direction = "received",
+  groupName = null,
   fileName,
   fileSize,
   fileType,
@@ -112,162 +111,165 @@ export async function saveReceivedFile({
   }
 
   const database = await openDatabase();
-
+  const actualOwner = owner || recipient;
   const cleanFileName = normalizeFileName(fileName);
 
-  const actualOwner = owner || recipient;
+  try {
+    const existingFiles = await getAllRecords(database);
 
-  // =======================================================
-  // CHECK FOR EXISTING FILE
-  // =======================================================
+    // Prefer the backend-provided stable transfer ID.
+    // Do not deduplicate unrelated files by filename and size
+    // when a stable transfer ID is available.
+    if (transferId) {
+      const existingTransfer = existingFiles.find(
+        (file) => file.owner === actualOwner && file.transferId === transferId,
+      );
 
-  const existingFile = await new Promise((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, "readonly");
-
-    const store = transaction.objectStore(STORE_NAME);
-
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      const files = request.result || [];
-
-      const match = files.find((file) => {
-        const storedCleanName = normalizeFileName(file.fileName);
-
+      if (existingTransfer) {
+        return existingTransfer;
+      }
+    } else {
+      // Compatibility fallback for older messages without
+      // a transfer ID. This may match two distinct files that
+      // happen to have the same metadata.
+      const existingFile = existingFiles.find((file) => {
         return (
           file.owner === actualOwner &&
           file.sender === sender &&
           file.recipient === recipient &&
           file.direction === direction &&
-          storedCleanName === cleanFileName &&
-          Number(file.fileSize) === Number(fileSize || blob.size)
+          (file.groupName || null) === (groupName || null) &&
+          normalizeFileName(file.fileName) === cleanFileName &&
+          Number(file.fileSize) === Number(fileSize ?? blob.size)
         );
       });
 
-      resolve(match || null);
+      if (existingFile) {
+        return existingFile;
+      }
+    }
+
+    const record = {
+      id: id || transferId || createFileId(),
+      transferId: transferId || null,
+
+      sender,
+      recipient,
+      owner: actualOwner,
+      direction,
+
+      groupName: groupName || null,
+
+      fileName: cleanFileName,
+      fileSize: Number(fileSize) || blob.size || 0,
+      fileType: fileType || blob.type || "application/octet-stream",
+
+      blob,
+
+      receivedAt: receivedAt || new Date().toISOString(),
     };
 
-    request.onerror = () => {
-      reject(request.error || new Error("Unable to check existing files."));
-    };
-  });
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
 
-  // =======================================================
-  // DUPLICATE FOUND
-  // =======================================================
+      store.put(record);
 
-  if (existingFile) {
+      transaction.oncomplete = resolve;
+
+      transaction.onerror = () => {
+        reject(transaction.error || new Error("Unable to save received file."));
+      };
+
+      transaction.onabort = () => {
+        reject(
+          transaction.error || new Error("File storage transaction aborted."),
+        );
+      };
+    });
+
+    await trimStoredFiles(actualOwner);
+
+    console.log(
+      "[FILE STORE] Saved:",
+      cleanFileName,
+      groupName ? `group: ${groupName}` : `direction: ${direction}`,
+    );
+
+    return record;
+  } finally {
     database.close();
-
-    console.log("[FILE STORE] Duplicate prevented:", cleanFileName);
-
-    return existingFile;
   }
-
-  // =======================================================
-  // CREATE NEW RECORD
-  // =======================================================
-
-  const id = createFileId();
-
-  const record = {
-    id,
-
-    sender,
-
-    recipient,
-
-    owner: actualOwner,
-
-    direction,
-
-    // Store clean filename
-    fileName: cleanFileName,
-
-    fileSize: Number(fileSize) || blob.size || 0,
-
-    fileType: fileType || blob.type || "application/octet-stream",
-
-    blob,
-
-    receivedAt: receivedAt || new Date().toISOString(),
-  };
-
-  await new Promise((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-
-    const store = transaction.objectStore(STORE_NAME);
-
-    store.put(record);
-
-    transaction.oncomplete = () => {
-      resolve();
-    };
-
-    transaction.onerror = () => {
-      reject(transaction.error || new Error("Unable to save received file."));
-    };
-
-    transaction.onabort = () => {
-      reject(
-        transaction.error || new Error("File storage transaction aborted."),
-      );
-    };
-  });
-
-  database.close();
-
-  await trimStoredFiles(actualOwner);
-
-  console.log(
-    "[FILE STORE] Saved:",
-    cleanFileName,
-    "from:",
-    sender,
-    "direction:",
-    direction,
-  );
-
-  return record;
 }
 
 // =========================================================
-// GET FILES FOR CURRENT USER
+// GET FILES BY RECIPIENT
+// Preserves the existing API.
 // =========================================================
 
 export async function getReceivedFiles(recipient) {
-  if (!recipient) {
-    return [];
-  }
+  if (!recipient) return [];
 
   const database = await openDatabase();
 
-  const records = await new Promise((resolve, reject) => {
+  try {
     const transaction = database.transaction(STORE_NAME, "readonly");
+    const request = transaction
+      .objectStore(STORE_NAME)
+      .index("recipient")
+      .getAll(recipient);
 
-    const store = transaction.objectStore(STORE_NAME);
+    const records = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result || []);
 
-    const index = store.index("recipient");
+      request.onerror = () => {
+        reject(request.error || new Error("Unable to read received files."));
+      };
+    });
 
-    const request = index.getAll(recipient);
+    return sortByReceivedAt(records);
+  } finally {
+    database.close();
+  }
+}
 
-    request.onsuccess = () => {
-      resolve(request.result || []);
-    };
+// =========================================================
+// GET ALL FILES OWNED BY A USER
+// Preserves compatibility with existing records.
+// =========================================================
 
-    request.onerror = () => {
-      reject(request.error || new Error("Unable to read received files."));
-    };
-  });
+export async function getStoredFilesForUser(username) {
+  if (!username) return [];
 
-  database.close();
+  const database = await openDatabase();
 
-  records.sort(
-    (a, b) =>
-      new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime(),
-  );
+  try {
+    const allFiles = await getAllRecords(database);
 
-  return records;
+    const userFiles = allFiles.filter((file) => {
+      if (file.owner) {
+        return file.owner === username;
+      }
+
+      return file.recipient === username || file.sender === username;
+    });
+
+    return sortByReceivedAt(userFiles);
+  } finally {
+    database.close();
+  }
+}
+
+// =========================================================
+// GET GROUP FILES FOR A USER
+// =========================================================
+
+export async function getStoredGroupFilesForUser(username, groupName) {
+  if (!username || !groupName) return [];
+
+  const files = await getStoredFilesForUser(username);
+
+  return files.filter((file) => file.groupName === groupName);
 }
 
 // =========================================================
@@ -275,45 +277,37 @@ export async function getReceivedFiles(recipient) {
 // =========================================================
 
 export async function deleteReceivedFile(fileId) {
-  if (!fileId) {
-    return;
-  }
+  if (!fileId) return;
 
   const database = await openDatabase();
 
-  await new Promise((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).delete(fileId);
 
-    const store = transaction.objectStore(STORE_NAME);
+      transaction.oncomplete = resolve;
 
-    store.delete(fileId);
+      transaction.onerror = () => {
+        reject(
+          transaction.error || new Error("Unable to delete received file."),
+        );
+      };
+    });
 
-    transaction.oncomplete = () => {
-      resolve();
-    };
-
-    transaction.onerror = () => {
-      reject(transaction.error || new Error("Unable to delete received file."));
-    };
-  });
-
-  database.close();
-
-  console.log("[FILE STORE] Deleted:", fileId);
+    console.log("[FILE STORE] Deleted:", fileId);
+  } finally {
+    database.close();
+  }
 }
 
 // =========================================================
-// CLEAR ALL FILES FOR A USER
-// =========================================================
-//
-// NOT called during logout.
-// Kept here for future "Clear received files" UI.
+// CLEAR FILES FOR A USER
+// NOT called automatically during logout.
 // =========================================================
 
 export async function clearReceivedFiles(recipient) {
-  if (!recipient) {
-    return;
-  }
+  if (!recipient) return;
 
   const files = await getReceivedFiles(recipient);
 
@@ -324,61 +318,14 @@ export async function clearReceivedFiles(recipient) {
   console.log("[FILE STORE] Cleared files for:", recipient);
 }
 
-export async function getStoredFilesForUser(username) {
-  if (!username) {
-    return [];
-  }
-
-  const database = await openDatabase();
-
-  const records = await new Promise((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, "readonly");
-
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      const allFiles = request.result || [];
-
-      const userFiles = allFiles.filter((file) => {
-        // New records
-        if (file.owner) {
-          return file.owner === username;
-        }
-
-        // Compatibility with files saved before
-        // the owner field was added
-        return file.recipient === username || file.sender === username;
-      });
-
-      resolve(userFiles);
-    };
-
-    request.onerror = () => {
-      reject(request.error || new Error("Unable to read stored files."));
-    };
-  });
-
-  database.close();
-
-  records.sort(
-    (a, b) =>
-      new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime(),
-  );
-
-  return records;
-}
-
 // =========================================================
-// LIMIT STORAGE
+// LIMIT LOCAL STORAGE
 // =========================================================
 
 async function trimStoredFiles(owner) {
   const files = await getStoredFilesForUser(owner);
 
-  if (files.length <= MAX_STORED_FILES) {
-    return;
-  }
+  if (files.length <= MAX_STORED_FILES) return;
 
   const filesToDelete = files.slice(0, files.length - MAX_STORED_FILES);
 

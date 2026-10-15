@@ -23,6 +23,7 @@ public class ApiServer {
         private UserApiHandler userApiHandler;
         private GroupApiHandler groupApiHandler;
         private MessageApiHandler messageApiHandler;
+        private GroupFileHistoryApiHandler groupFileHistoryApiHandler;
 
         public void start() throws IOException {
 
@@ -38,6 +39,7 @@ public class ApiServer {
                 userApiHandler = new UserApiHandler();
                 groupApiHandler = new GroupApiHandler();
                 messageApiHandler = new MessageApiHandler();
+                groupFileHistoryApiHandler = new GroupFileHistoryApiHandler();
 
                 // =====================================================
                 // HEALTH CHECK
@@ -222,6 +224,28 @@ public class ApiServer {
                                 this::handleInternalFileDelivery);
 
                 // =====================================================
+                // INTERNAL GROUP FILE DELIVERY
+                // =====================================================
+                //
+                // This endpoint is used by Server 1 / Server 2 when
+                // a group file needs to be delivered to a browser user
+                // through the WebSocket Bridge.
+                //
+                // =====================================================
+
+                server.createContext(
+                                "/internal/group-files/deliver",
+                                this::handleInternalGroupFileDelivery);
+
+                server.createContext(
+                                "/api/group-files/history",
+                                groupFileHistoryApiHandler);
+
+                server.createContext(
+                                "/api/group-files/download",
+                                groupFileHistoryApiHandler);
+
+                // =====================================================
                 // START SERVER
                 // =====================================================
 
@@ -249,6 +273,11 @@ public class ApiServer {
                                 "[API] Internal file delivery endpoint: http://localhost:"
                                                 + PORT
                                                 + "/internal/files/deliver");
+
+                System.out.println(
+                                "[API] Internal group file delivery endpoint: http://localhost:"
+                                                + PORT
+                                                + "/internal/group-files/deliver");
 
                 System.out.println(
                                 "[API] CORS enabled for React: http://localhost:5173");
@@ -430,6 +459,243 @@ public class ApiServer {
                                                 exchange,
                                                 500,
                                                 "{\"success\":false,\"message\":\"Internal file delivery error\"}");
+
+                        } catch (Exception ignored) {
+                        }
+
+                } finally {
+
+                        try {
+                                exchange.close();
+                        } catch (Exception ignored) {
+                        }
+                }
+        }
+
+        // =========================================================
+        // INTERNAL GROUP FILE DELIVERY
+        // =========================================================
+
+        private void handleInternalGroupFileDelivery(
+                        HttpExchange exchange) {
+
+                try {
+
+                        // -------------------------------------------------
+                        // Only POST is allowed
+                        // -------------------------------------------------
+
+                        if (!exchange.getRequestMethod()
+                                        .equalsIgnoreCase("POST")) {
+
+                                sendResponse(
+                                                exchange,
+                                                405,
+                                                "{\"success\":false,\"message\":\"Method Not Allowed\"}");
+
+                                return;
+                        }
+
+                        // -------------------------------------------------
+                        // Security check
+                        // -------------------------------------------------
+                        //
+                        // This endpoint is intended only for local
+                        // Server 1 / Server 2 communication.
+                        //
+                        // -------------------------------------------------
+
+                        InetSocketAddress remoteAddress = exchange.getRemoteAddress();
+
+                        if (remoteAddress == null
+                                        || remoteAddress.getAddress() == null
+                                        || !remoteAddress.getAddress()
+                                                        .isLoopbackAddress()) {
+
+                                System.out.println(
+                                                "[API-GROUP-FILE] Rejected non-local request.");
+
+                                sendResponse(
+                                                exchange,
+                                                403,
+                                                "{\"success\":false,\"message\":\"Forbidden\"}");
+
+                                return;
+                        }
+
+                        // -------------------------------------------------
+                        // Read request body
+                        // -------------------------------------------------
+
+                        String requestBody;
+
+                        try (InputStream inputStream = exchange.getRequestBody()) {
+
+                                requestBody = new String(
+                                                inputStream.readAllBytes(),
+                                                StandardCharsets.UTF_8);
+                        }
+
+                        Map<String, String> params = parseFormData(requestBody);
+
+                        String recipient = params.get("recipient");
+
+                        String sender = params.get("sender");
+
+                        String groupName = params.get("groupName");
+
+                        String filePath = params.get("filePath");
+
+                        String fileName = params.get("fileName");
+
+                        String transferId = params.get("transferId");
+
+                        // -------------------------------------------------
+                        // Validate parameters
+                        // -------------------------------------------------
+
+                        if (recipient == null
+                                        || recipient.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"Recipient is required\"}");
+
+                                return;
+                        }
+
+                        if (sender == null
+                                        || sender.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"Sender is required\"}");
+
+                                return;
+                        }
+
+                        if (groupName == null
+                                        || groupName.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"Group name is required\"}");
+
+                                return;
+                        }
+
+                        if (filePath == null
+                                        || filePath.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"File path is required\"}");
+
+                                return;
+                        }
+
+                        if (fileName == null
+                                        || fileName.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"File name is required\"}");
+
+                                return;
+                        }
+
+                        if (transferId == null
+                                        || transferId.trim().isEmpty()) {
+
+                                sendResponse(
+                                                exchange,
+                                                400,
+                                                "{\"success\":false,\"message\":\"Transfer ID is required\"}");
+
+                                return;
+                        }
+
+                        // -------------------------------------------------
+                        // Logging
+                        // -------------------------------------------------
+
+                        System.out.println();
+                        System.out.println(
+                                        "[API-GROUP-FILE] =====================================");
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] Internal group file delivery request");
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] Sender: "
+                                                        + sender);
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] Group: "
+                                                        + groupName);
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] Recipient: "
+                                                        + recipient);
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] File: "
+                                                        + fileName);
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] Path: "
+                                                        + filePath);
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] =====================================");
+
+                        // -------------------------------------------------
+                        // Let the WebSocket Bridge deliver the group file.
+                        // -------------------------------------------------
+
+                        boolean delivered = WebSocketBridgeServer
+                                        .deliverGroupFileFromInternalRequest(
+                                                        recipient,
+                                                        sender,
+                                                        groupName,
+                                                        filePath,
+                                                        fileName,
+                                                        transferId);
+
+                        if (delivered) {
+
+                                sendResponse(
+                                                exchange,
+                                                200,
+                                                "{\"success\":true,\"message\":\"Group file delivered\"}");
+
+                        } else {
+
+                                sendResponse(
+                                                exchange,
+                                                404,
+                                                "{\"success\":false,\"message\":\"Recipient WebSocket session not found or delivery failed\"}");
+                        }
+
+                } catch (Exception e) {
+
+                        System.out.println(
+                                        "[API-GROUP-FILE] Internal delivery error: "
+                                                        + e.getMessage());
+
+                        e.printStackTrace();
+
+                        try {
+
+                                sendResponse(
+                                                exchange,
+                                                500,
+                                                "{\"success\":false,\"message\":\"Internal group file delivery error\"}");
 
                         } catch (Exception ignored) {
                         }

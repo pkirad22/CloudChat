@@ -9,6 +9,9 @@ import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./admin/AdminDashboard";
 import Chat from "./pages/Chat";
 import FileSharing from "./pages/FileSharing";
+import Groups from "./pages/Groups";
+import GroupChat from "./pages/GroupChat";
+import GroupFiles from "./pages/GroupFiles";
 
 function App() {
   return (
@@ -26,6 +29,11 @@ function App() {
 
         <Route path="/chat" element={<Chat />} />
         <Route path="/file-sharing" element={<FileSharing />} />
+        <Route path="/groups" element={<Groups />} />
+
+        <Route path="/group-chat" element={<GroupChat />} />
+        <Route path="/group-files" element={<GroupFiles />} />
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

@@ -347,9 +347,6 @@ public class ServerSynchronizer {
 
                 if (message.equals("PONG")) {
 
-                        System.out.println(
-                                        "[SYNC] Heartbeat received.");
-
                         return;
                 }
 
@@ -545,6 +542,11 @@ public class ServerSynchronizer {
 
                 if (message.startsWith("GROUP_OWNER_REMOVE:")) {
                         processGroupOwnerRemove(message);
+                        return;
+                }
+
+                if (message.startsWith("GROUP_ACCESS_UPDATE:")) {
+                        processGroupAccessUpdate(message);
                         return;
                 }
 
@@ -910,7 +912,6 @@ public class ServerSynchronizer {
                         }
 
                         String groupName = parts[1].trim();
-
                         String username = parts[2].trim();
 
                         if (groupName.isEmpty()
@@ -925,9 +926,58 @@ public class ServerSynchronizer {
                                                         + " -> "
                                                         + groupName);
 
+                        // =====================================================
+                        // 1. UPDATE PERSISTENT IN-MEMORY MEMBERSHIP
+                        // =====================================================
+
                         ChatServer.removeSyncedPersistentGroupMember(
                                         groupName,
                                         username);
+
+                        // =====================================================
+                        // 2. REMOVE FROM REMOTE GROUP TRACKING
+                        // =====================================================
+
+                        ChatServer.removeRemoteGroupMember(
+                                        groupName,
+                                        username);
+
+                        // =====================================================
+                        // 3. REMOVE FROM ACTIVE LOCAL GROUP
+                        // =====================================================
+
+                        ChatServer.removeLocalGroupMember(
+                                        groupName,
+                                        username);
+
+                        // =====================================================
+                        // 4. REMOVE REMOTE CLIENT SESSION MEMBERSHIP
+                        // =====================================================
+
+                        ClientHandler targetHandler = ChatServer.getOnlineUser(username);
+
+                        if (targetHandler != null) {
+
+                                targetHandler.removeRemoteGroup(
+                                                groupName);
+
+                                targetHandler.sendMessage(
+                                                "SYSTEM: You have been removed from group '"
+                                                                + groupName
+                                                                + "' by a group owner.");
+
+                                System.out.println(
+                                                "[SYNC] Removed active user "
+                                                                + username
+                                                                + " from group "
+                                                                + groupName);
+                        }
+
+                        System.out.println(
+                                        "[SYNC] Group member removal synchronized: "
+                                                        + username
+                                                        + " <- "
+                                                        + groupName);
 
                 } catch (Exception e) {
 
@@ -1027,6 +1077,55 @@ public class ServerSynchronizer {
                                         "[SYNC] Error processing GROUP_OWNER_REMOVE: "
                                                         + e.getMessage());
                 }
+        }
+
+        private void processGroupAccessUpdate(String message) {
+
+                String[] parts = message.split(":", 3);
+
+                if (parts.length < 3) {
+                        System.out.println("[SYNC] Invalid GROUP_ACCESS_UPDATE message: " + message);
+                        return;
+                }
+
+                String groupName = parts[1].trim();
+                String accessMode = parts[2].trim().toUpperCase();
+
+                if (groupName.isEmpty() || accessMode.isEmpty()) {
+                        System.out.println("[SYNC] Invalid group access update.");
+                        return;
+                }
+
+                if (!accessMode.equals("OPEN")
+                                && !accessMode.equals("CODE")
+                                && !accessMode.equals("REQUEST")) {
+
+                        System.out.println(
+                                        "[SYNC] Invalid access mode received: " + accessMode);
+                        return;
+                }
+
+                if (!ChatServer.groupExists(groupName)) {
+                        System.out.println(
+                                        "[SYNC] Group does not exist locally: " + groupName);
+                        return;
+                }
+
+                /*
+                 * MongoDB is shared between Server 1 and Server 2.
+                 *
+                 * The originating server has already updated the database.
+                 * Therefore, DO NOT call GroupService.setAccessMode() here.
+                 *
+                 * This synchronization message confirms that the other server
+                 * has received the access-mode change.
+                 */
+
+                System.out.println(
+                                "[SYNC] Group access mode synchronized: "
+                                                + groupName
+                                                + " -> "
+                                                + accessMode);
         }
 
         // =========================================================
@@ -1248,12 +1347,12 @@ public class ServerSynchronizer {
                          * fileSize:
                          * transferPort
                          *
-                         * split limit = 6
+                         * split limit = 8
                          */
 
-                        String[] parts = message.split(":", 7);
+                        String[] parts = message.split(":", 8);
 
-                        if (parts.length < 7) {
+                        if (parts.length < 8) {
 
                                 System.out.println(
                                                 "[SYNC] Invalid FILE_GROUP_ROUTE_REQUEST.");
@@ -1272,6 +1371,16 @@ public class ServerSynchronizer {
                         int transferPort = Integer.parseInt(parts[5]);
 
                         String recipientString = parts[6];
+
+                        String transferId = parts[7];
+
+                        if (transferId.trim().isEmpty()) {
+
+                                System.out.println(
+                                                "[GROUP-FILE-DIST] Missing transfer ID.");
+
+                                return;
+                        }
 
                         java.util.List<String> allRecipients = new java.util.ArrayList<>();
 
@@ -1315,15 +1424,11 @@ public class ServerSynchronizer {
                                                         + transferPort);
 
                         System.out.println(
+                                        "[GROUP-FILE-DIST] Transfer ID: " + transferId);
+
+                        System.out.println(
                                         "[GROUP-FILE-DIST] All recipients: "
                                                         + allRecipients);
-
-                        // =====================================================
-                        // VERIFY LOCAL GROUP MEMBERS
-                        // =====================================================
-
-                        Set<String> remoteGroupMembers = ChatServer.getRemoteGroupMembers(
-                                        groupName);
 
                         /*
                          * On this server, remoteGroupMembers contains users
@@ -1337,62 +1442,37 @@ public class ServerSynchronizer {
 
                         for (String username : ChatServer.getLocalOnlineUsers()) {
 
-                                if (username == null
-                                                || username.trim().isEmpty()) {
-
+                                if (username == null || username.trim().isEmpty()) {
                                         continue;
                                 }
 
                                 ClientHandler client = ChatServer.getOnlineUser(username);
 
-                                if (client == null) {
-                                        continue;
-                                }
-
-                                if (ChatServer.isAnyGroupMember(
-                                                groupName,
-                                                client)) {
+                                if (client != null
+                                                && ChatServer.isAnyGroupMember(groupName, client)) {
 
                                         localRecipients.add(username);
 
                                         System.out.println(
-                                                        "[GROUP-FILE-DIST] "
-                                                                        + "Local recipient found: "
+                                                        "[GROUP-FILE-DIST] Local recipient found: "
                                                                         + username);
                                 }
                         }
 
-                        boolean hasLocalRecipients = !localRecipients.isEmpty();
-
-                        if (!hasLocalRecipients) {
+                        if (localRecipients.isEmpty()) {
 
                                 System.out.println(
-                                                "[GROUP-FILE-DIST] No local online recipients "
-                                                                + "for group "
+                                                "[GROUP-FILE-DIST] No local online recipients for group "
                                                                 + groupName);
-
-                                System.out.println(
-                                                "[GROUP-FILE-DIST] File will be received "
-                                                                + "and checked for offline delivery.");
-
-                        } else {
-
-                                System.out.println(
-                                                "[GROUP-FILE-DIST] Local online recipients: "
-                                                                + localRecipients);
                         }
 
                         String sourceServer = primaryServer
-                                        ? "SERVER_1"
-                                        : "SERVER_2";
-
-                        String destinationServer = primaryServer
                                         ? "SERVER_2"
                                         : "SERVER_1";
 
-                        // =====================================================
-                        // START SERVER-TO-SERVER FILE RECEIVER
-                        // =====================================================
+                        String destinationServer = primaryServer
+                                        ? "SERVER_1"
+                                        : "SERVER_2";
 
                         Thread receiverThread = new Thread(
                                         new DistributedGroupFileTransferReceiver(
@@ -1404,15 +1484,11 @@ public class ServerSynchronizer {
                                                         fileSize,
                                                         allRecipients,
                                                         sourceServer,
-                                                        destinationServer),
-                                        "DistributedGroupFileReceiver-"
-                                                        + fileName);
+                                                        destinationServer,
+                                                        transferId),
+                                        "DistributedGroupFileReceiver-" + fileName);
 
                         receiverThread.start();
-
-                        // =====================================================
-                        // ACKNOWLEDGE
-                        // =====================================================
 
                         send(
                                         "FILE_GROUP_ROUTE_ACK:"
@@ -1428,9 +1504,10 @@ public class ServerSynchronizer {
                 } catch (Exception e) {
 
                         System.out.println(
-                                        "[GROUP-FILE-DIST] Error processing "
-                                                        + "group file route request: "
+                                        "[GROUP-FILE-DIST] Error processing group file route request: "
                                                         + e.getMessage());
+
+                        e.printStackTrace();
                 }
         }
 
@@ -1501,9 +1578,9 @@ public class ServerSynchronizer {
                         return;
                 }
 
-                String groupName = parts[1];
+                String groupName = parts[1].trim();
 
-                String username = parts[2];
+                String username = parts[2].trim();
 
                 System.out.println(
                                 "[SYNC] Remote group leave: "
@@ -1512,23 +1589,15 @@ public class ServerSynchronizer {
                                                 + groupName);
 
                 // ---------------------------------------------------------
-                // Remove member from MongoDB and persistent state
+                // MongoDB is shared between both servers.
+                //
+                // The originating server has already removed the member
+                // from MongoDB, so DO NOT modify the database here.
                 // ---------------------------------------------------------
 
-                boolean removed = ChatServer.removePersistentGroupMember(
+                ChatServer.removeSyncedPersistentGroupMember(
                                 groupName,
                                 username);
-
-                if (!removed) {
-
-                        System.out.println(
-                                        "[DB] Failed to persist group leave: "
-                                                        + username
-                                                        + " <- "
-                                                        + groupName);
-
-                        return;
-                }
 
                 // ---------------------------------------------------------
                 // Remove member from remote in-memory state
@@ -1537,6 +1606,12 @@ public class ServerSynchronizer {
                 ChatServer.removeRemoteGroupMember(
                                 groupName,
                                 username);
+
+                System.out.println(
+                                "[SYNC] Group leave synchronized: "
+                                                + username
+                                                + " <- "
+                                                + groupName);
         }
 
         // =========================================================
@@ -1651,57 +1726,24 @@ public class ServerSynchronizer {
         // =========================================================
 
         private void processLoadUpdate(String message) {
-
                 try {
-
                         String[] parts = message.split(":", 6);
 
                         if (parts.length < 6) {
-
-                                System.out.println(
-                                                "[LOAD SYNC] Invalid LOAD_UPDATE message.");
-
                                 return;
                         }
 
                         remoteConnectedClients = Integer.parseInt(parts[1]);
-
                         remoteCpuUsage = Double.parseDouble(parts[2]);
-
                         remoteMemoryUsage = Double.parseDouble(parts[3]);
-
                         remoteActiveThreads = Integer.parseInt(parts[4]);
-
                         remoteLoadScore = Double.parseDouble(parts[5]);
 
-                        System.out.println();
-
-                        System.out.println(
-                                        "[LOAD SYNC] Remote server load updated.");
-
-                        System.out.println(
-                                        "[LOAD SYNC] Clients : "
-                                                        + remoteConnectedClients);
-
-                        System.out.printf(
-                                        "[LOAD SYNC] CPU     : %.2f%%%n",
-                                        remoteCpuUsage);
-
-                        System.out.printf(
-                                        "[LOAD SYNC] Memory  : %.2f%%%n",
-                                        remoteMemoryUsage);
-
-                        System.out.println(
-                                        "[LOAD SYNC] Threads : "
-                                                        + remoteActiveThreads);
-
-                        System.out.printf(
-                                        "[LOAD SYNC] Score   : %.2f%n",
-                                        remoteLoadScore);
+                        // Remote metrics are updated silently.
+                        // The frontend monitoring dashboard can fetch these values later.
 
                 } catch (Exception e) {
-
-                        System.out.println(
+                        System.err.println(
                                         "[LOAD SYNC] Error processing load update: "
                                                         + e.getMessage());
                 }
@@ -1712,19 +1754,13 @@ public class ServerSynchronizer {
         // =========================================================
 
         private void sendLoadUpdate() {
-
                 try {
-
                         ServerLoadMonitor monitor = new ServerLoadMonitor();
 
                         int clients = monitor.getConnectedClients();
-
                         double cpu = monitor.getCpuUsage();
-
                         double memory = monitor.getMemoryUsage();
-
                         int threads = monitor.getActiveThreads();
-
                         double score = monitor.getLoadScore();
 
                         String message = "LOAD_UPDATE:"
@@ -1736,22 +1772,8 @@ public class ServerSynchronizer {
 
                         send(message);
 
-                        System.out.printf(
-                                        "[LOAD SYNC] Local load sent - "
-                                                        + "Clients: %d, "
-                                                        + "CPU: %.2f%%, "
-                                                        + "Memory: %.2f%%, "
-                                                        + "Threads: %d, "
-                                                        + "Score: %.2f%n",
-                                        clients,
-                                        cpu,
-                                        memory,
-                                        threads,
-                                        score);
-
                 } catch (Exception e) {
-
-                        System.out.println(
+                        System.err.println(
                                         "[LOAD SYNC] Unable to send load update: "
                                                         + e.getMessage());
                 }
@@ -2105,80 +2127,59 @@ public class ServerSynchronizer {
                         String fileName,
                         long fileSize,
                         int transferPort,
-                        java.util.Set<String> recipients) {
+                        java.util.Set<String> remoteRecipients,
+                        String transferId) {
 
                 try {
-
                         if (!connected) {
-
                                 System.out.println(
                                                 "[SYNC] Cannot send group file route request. "
                                                                 + "Server not connected.");
-
                                 return false;
                         }
 
-                        /*
-                         * Format:
-                         *
-                         * FILE_GROUP_ROUTE_REQUEST:
-                         * sender:
-                         * groupName:
-                         * fileName:
-                         * fileSize:
-                         * transferPort:
-                         * recipients
-                         */
+                        if (remoteRecipients == null || remoteRecipients.isEmpty()) {
+                                System.out.println(
+                                                "[SYNC] No remote recipients for group file.");
+                                return false;
+                        }
 
-                        String recipientList = String.join(
-                                        ",",
-                                        recipients);
+                        if (transferId == null || transferId.trim().isEmpty()) {
+                                System.out.println(
+                                                "[SYNC] Missing group file transfer ID.");
+                                return false;
+                        }
+
+                        String recipientList = String.join(",", remoteRecipients);
 
                         String message = "FILE_GROUP_ROUTE_REQUEST:"
-                                        + sender
-                                        + ":"
-                                        + groupName
-                                        + ":"
-                                        + fileName
-                                        + ":"
-                                        + fileSize
-                                        + ":"
-                                        + transferPort
-                                        + ":"
-                                        + recipientList;
+                                        + sender + ":"
+                                        + groupName + ":"
+                                        + fileName + ":"
+                                        + fileSize + ":"
+                                        + transferPort + ":"
+                                        + recipientList + ":"
+                                        + transferId;
 
                         send(message);
 
                         System.out.println(
                                         "[SYNC] FILE_GROUP_ROUTE_REQUEST sent: "
                                                         + sender
-                                                        + " -> Group: "
-                                                        + groupName
-                                                        + " | File: "
-                                                        + fileName
-                                                        + " | Size: "
-                                                        + fileSize
-                                                        + " bytes"
-                                                        + " | Port: "
-                                                        + transferPort
-                                                        + " | Recipients: "
-                                                        + recipientList);
+                                                        + " -> Group: " + groupName
+                                                        + " | File: " + fileName
+                                                        + " | Transfer ID: " + transferId
+                                                        + " | Remote recipients: " + recipientList);
 
                         return true;
 
                 } catch (Exception e) {
-
                         System.out.println(
                                         "[SYNC] Failed to send group file route request: "
                                                         + e.getMessage());
-
                         return false;
                 }
         }
-
-        // =========================================================
-        // SEND GROUP MEMBER ADD
-        // =========================================================
 
         // =========================================================
         // SEND GROUP MEMBER ADD
@@ -2398,6 +2399,51 @@ public class ServerSynchronizer {
 
                         return false;
                 }
+        }
+
+        public boolean sendGroupAccessModeUpdate(
+                        String groupName,
+                        String accessMode) {
+
+                if (!connected) {
+                        System.out.println(
+                                        "[SYNC] Cannot send group access update - not connected.");
+                        return false;
+                }
+
+                if (groupName == null || groupName.trim().isEmpty()) {
+                        return false;
+                }
+
+                if (accessMode == null) {
+                        return false;
+                }
+
+                accessMode = accessMode.trim().toUpperCase();
+
+                if (!accessMode.equals("OPEN")
+                                && !accessMode.equals("CODE")
+                                && !accessMode.equals("REQUEST")) {
+
+                        System.out.println(
+                                        "[SYNC] Invalid access mode: " + accessMode);
+                        return false;
+                }
+
+                String message = "GROUP_ACCESS_UPDATE:"
+                                + groupName.trim()
+                                + ":"
+                                + accessMode;
+
+                send(message);
+
+                System.out.println(
+                                "[SYNC] Sent group access update: "
+                                                + groupName
+                                                + " -> "
+                                                + accessMode);
+
+                return true;
         }
 
         public boolean isRemoteUserOnline(String username) {

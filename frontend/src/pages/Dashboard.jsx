@@ -572,16 +572,59 @@ function Dashboard() {
 
           <div
             className="auth-card"
+            onClick={() => navigate("/groups")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate("/groups");
+              }
+            }}
             style={{
               padding: "20px",
               minHeight: "auto",
+              cursor: "pointer",
+              transition: "transform 0.2s ease, border-color 0.2s ease",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.transform = "translateY(-2px)";
+              event.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.transform = "translateY(0)";
+              event.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
             }}
           >
-            <h3 style={{ marginTop: 0 }}>Groups</h3>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "10px",
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Groups</h3>
 
-            <p style={{ opacity: 0.65 }}>
-              Distributed groups and members will appear here.
+              <Users size={22} />
+            </div>
+
+            <p style={{ opacity: 0.65, marginBottom: "12px" }}>
+              Create, join and manage distributed groups.
             </p>
+
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "13px",
+                opacity: 0.75,
+              }}
+            >
+              <span>Open Groups</span>
+              <span>→</span>
+            </div>
           </div>
 
           <div
