@@ -22,6 +22,15 @@ public class WebSocketClientSession {
         private String username;
         private String password;
 
+        // =========================================================
+        // GOOGLE AUTHENTICATION STATE
+        // =========================================================
+
+        private String googleTicket;
+        private String googleSessionId;
+
+        private boolean googleAuthentication = false;
+
         private String currentServerId;
 
         private final AtomicBoolean authenticated = new AtomicBoolean(false);
@@ -113,6 +122,18 @@ public class WebSocketClientSession {
                 System.out.println(
                                 "[BRIDGE] React -> "
                                                 + message);
+
+                // -----------------------------------------------------
+                // GOOGLE LOGIN REQUEST
+                // -----------------------------------------------------
+
+                if (message.startsWith("{")
+                                && message.contains("\"type\":\"google_login\"")) {
+
+                        handleGoogleLoginRequest(message);
+
+                        return;
+                }
 
                 // -----------------------------------------------------
                 // LOGIN REQUEST
@@ -1237,6 +1258,41 @@ public class WebSocketClientSession {
         }
 
         // =========================================================
+        // HANDLE GOOGLE LOGIN
+        // =========================================================
+
+        private void handleGoogleLoginRequest(String json) {
+
+                String requestedUsername = extractJsonValue(json, "username");
+                String requestedTicket = extractJsonValue(json, "ticket");
+                String requestedSessionId = extractJsonValue(json, "sessionId");
+
+                if (requestedUsername == null
+                                || requestedUsername.trim().isEmpty()
+                                || requestedTicket == null
+                                || requestedTicket.trim().isEmpty()
+                                || requestedSessionId == null
+                                || requestedSessionId.trim().isEmpty()) {
+
+                        sendError("Google login information is incomplete.");
+                        return;
+                }
+
+                username = requestedUsername.trim();
+                googleTicket = requestedTicket.trim();
+                googleSessionId = requestedSessionId.trim();
+
+                password = null;
+                googleAuthentication = true;
+
+                sendJson(
+                                "{\"type\":\"login_start\","
+                                                + "\"message\":\"Connecting with Google...\"}");
+
+                connectToBestServer();
+        }
+
+        // =========================================================
         // LOGIN REQUEST
         // =========================================================
 
@@ -1261,6 +1317,9 @@ public class WebSocketClientSession {
 
                         return;
                 }
+
+                // Normal password login — not Google login
+                googleAuthentication = false;
 
                 username = requestedUsername.trim();
 
@@ -1445,12 +1504,27 @@ public class WebSocketClientSession {
                 // AUTH REQUEST
                 // -----------------------------------------------------
 
-                if (message.equals(
-                                "AUTH_REQUEST")) {
-
+                if (message.equals("AUTH_REQUEST")) {
                         connection.sendMessage(
-                                        "login");
+                                        googleAuthentication ? "google_ticket" : "login");
+                        return;
+                }
 
+                if (message.equals("GOOGLE_TICKET_REQUEST")) {
+                        if (googleTicket == null || googleTicket.isBlank()) {
+                                connection.sendMessage("");
+                        } else {
+                                connection.sendMessage(googleTicket);
+                        }
+                        return;
+                }
+
+                if (message.equals("GOOGLE_SESSION_REQUEST")) {
+                        if (googleSessionId == null || googleSessionId.isBlank()) {
+                                connection.sendMessage("");
+                        } else {
+                                connection.sendMessage(googleSessionId);
+                        }
                         return;
                 }
 

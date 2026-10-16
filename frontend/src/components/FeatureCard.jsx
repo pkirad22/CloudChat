@@ -1,41 +1,14 @@
-import { MessageCircle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-
-function Navbar() {
-  const navigate = useNavigate();
-
+function FeatureCard({ icon, title, description }) {
   return (
-    <header className="navbar">
-      <button
-        type="button"
-        className="brand brand-button"
-        onClick={() => navigate("/")}
-      >
-        <div className="brand-logo">
-          <MessageCircle size={22} />
-        </div>
+    <article className="feature-card">
+      <div className="feature-icon">
+        {typeof icon === "function" ? icon() : icon}
+      </div>
 
-        <div>
-          <div className="brand-name">CloudChat</div>
-          <div className="brand-subtitle">DISTRIBUTED MESSAGING</div>
-        </div>
-      </button>
-
-      <nav className="nav-links">
-        <a href="#platform">Platform</a>
-        <a href="#security">Security</a>
-        <a href="#network">Network</a>
-
-        <button
-          type="button"
-          className="nav-signin"
-          onClick={() => navigate("/login")}
-        >
-          Sign in
-        </button>
-      </nav>
-    </header>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </article>
   );
 }
 
-export default Navbar;
+export default FeatureCard;

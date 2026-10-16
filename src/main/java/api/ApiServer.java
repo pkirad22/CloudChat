@@ -66,12 +66,43 @@ public class ApiServer {
                                 withCors(authApiHandler::handleRegister));
 
                 // =====================================================
+                // EMAIL OTP VERIFICATION
+                // =====================================================
+
+                server.createContext(
+                                "/api/auth/send-otp",
+                                withCors(authApiHandler::handleSendOtp));
+
+                server.createContext(
+                                "/api/auth/verify-otp",
+                                withCors(authApiHandler::handleVerifyOtp));
+
+                server.createContext("/api/auth/google",
+                                withCors(authApiHandler::handleGoogleLogin));
+
+                // =====================================================
                 // USERS
                 // =====================================================
 
                 server.createContext(
                                 "/api/users/me",
                                 withCors(userApiHandler::handleMe));
+
+                // =====================================================
+                // USER PROFILE — UPDATE USERNAME
+                // =====================================================
+
+                server.createContext(
+                                "/api/users/update-username",
+                                withCors(authApiHandler::handleUpdateUsername));
+
+                // =====================================================
+                // USER PROFILE — CHANGE PASSWORD
+                // =====================================================
+
+                server.createContext(
+                                "/api/users/change-password",
+                                withCors(authApiHandler::handleChangePassword));
 
                 server.createContext(
                                 "/api/users/online",
@@ -187,6 +218,12 @@ public class ApiServer {
                                 });
 
                 // =====================================================
+                // CHECK EMAIL
+                // =====================================================
+                server.createContext(
+                                "/api/auth/check-email",
+                                withCors(authApiHandler::handleCheckEmail));
+                // =====================================================
                 // ONLINE USERS
                 // =====================================================
 
@@ -244,6 +281,22 @@ public class ApiServer {
                 server.createContext(
                                 "/api/group-files/download",
                                 groupFileHistoryApiHandler);
+
+                // =====================================================
+                // GOOGLE ACCOUNT — SET FIRST PASSWORD
+                // =====================================================
+
+                server.createContext(
+                                "/api/users/google/set-password",
+                                withCors(authApiHandler::handleGoogleSetPassword));
+
+                // =====================================================
+                // GOOGLE ACCOUNT — UPDATE USERNAME
+                // =====================================================
+
+                server.createContext(
+                                "/api/users/google/update-username",
+                                withCors(authApiHandler::handleGoogleUpdateUsername));
 
                 // =====================================================
                 // START SERVER

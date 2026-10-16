@@ -17,6 +17,67 @@ let socket = null;
 
 let currentChatUsername = "";
 
+// =========================================================
+// GOOGLE AUTHENTICATION STATE
+// =========================================================
+
+let googleAuthCredentials = null;
+
+// =========================================================
+// ACTIVE SERVER TRACKING
+// =========================================================
+
+let activeServerId = null;
+const activeServerHandlers = new Set();
+
+function updateActiveServer(data) {
+  if (!data || !["login_success", "server_reconnected"].includes(data.type)) {
+    return;
+  }
+
+  const server = String(data.server || "").toUpperCase();
+
+  let nextServer = null;
+
+  if (server === "SERVER_1") {
+    nextServer = "Server 1";
+  } else if (server === "SERVER_2") {
+    nextServer = "Server 2";
+  }
+
+  if (!nextServer || nextServer === activeServerId) {
+    return;
+  }
+
+  activeServerId = nextServer;
+
+  console.log("[CHAT] Active server updated:", activeServerId);
+
+  activeServerHandlers.forEach((handler) => {
+    handler(activeServerId);
+  });
+}
+
+export function getActiveServer() {
+  return activeServerId;
+}
+
+export function onActiveServerChange(handler) {
+  if (typeof handler !== "function") {
+    return () => {};
+  }
+
+  activeServerHandlers.add(handler);
+
+  if (activeServerId) {
+    handler(activeServerId);
+  }
+
+  return () => {
+    activeServerHandlers.delete(handler);
+  };
+}
+
 let messageHandlers = [];
 let connectionHandlers = [];
 let closeHandlers = [];
@@ -84,7 +145,42 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024;
 // CONNECT CHAT
 // =========================================================
 
+// =========================================================
+// NORMAL PASSWORD LOGIN
+// =========================================================
+
 export function connectChat(username, password) {
+  return connectChatInternal(username, {
+    type: "login",
+    username,
+    password,
+  });
+}
+
+// =========================================================
+// GOOGLE LOGIN
+// =========================================================
+
+export function connectChatWithGoogle(username, ticket, sessionId) {
+  if (!username || !ticket || !sessionId) {
+    return Promise.reject(
+      new Error("Google authentication information is incomplete."),
+    );
+  }
+
+  return connectChatInternal(username, {
+    type: "google_login",
+    username,
+    ticket,
+    sessionId,
+  });
+}
+
+// =========================================================
+// SHARED WEBSOCKET CONNECTION
+// =========================================================
+
+function connectChatInternal(username, loginMessage) {
   currentChatUsername = username || "";
 
   return new Promise((resolve, reject) => {
@@ -110,13 +206,7 @@ export function connectChat(username, password) {
     socket.onopen = () => {
       console.log("[CHAT WS] Connected to bridge");
 
-      socket.send(
-        JSON.stringify({
-          type: "login",
-          username,
-          password,
-        }),
-      );
+      socket.send(JSON.stringify(loginMessage));
     };
 
     // -------------------------------------------------------
@@ -212,6 +302,8 @@ export function connectChat(username, password) {
       if (!data || typeof data !== "object") {
         return;
       }
+
+      updateActiveServer(data);
 
       // =====================================================
       // PRIVATE FILE DELIVERY STARTED
@@ -624,6 +716,8 @@ export function connectChat(username, password) {
       // =====================================================
 
       if (data.type === "server_connected") {
+        updateActiveServer(data);
+
         connectionHandlers.forEach((handler) => {
           try {
             handler(data);

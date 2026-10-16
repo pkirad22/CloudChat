@@ -1,3 +1,4 @@
+
 package model;
 
 public class User {
@@ -5,10 +6,12 @@ public class User {
     private String username;
     private String password;
     private String email;
+    private String mobileNumber;
 
     public User() {
     }
 
+    // Existing constructor — preserved for compatibility
     public User(
             String username,
             String password,
@@ -17,6 +20,19 @@ public class User {
         this.username = username;
         this.password = password;
         this.email = email;
+    }
+
+    // New constructor with mobile number
+    public User(
+            String username,
+            String password,
+            String email,
+            String mobileNumber) {
+
+        this.username = username;
+        this.password = password;
+        this.email = email;
+        this.mobileNumber = mobileNumber;
     }
 
     public String getUsername() {
@@ -43,12 +59,20 @@ public class User {
         this.email = email;
     }
 
+    public String getMobileNumber() {
+        return mobileNumber;
+    }
+
+    public void setMobileNumber(String mobileNumber) {
+        this.mobileNumber = mobileNumber;
+    }
+
     @Override
     public String toString() {
-
         return "User{" +
                 "username='" + username + '\'' +
                 ", email='" + email + '\'' +
+                ", mobileNumber='" + mobileNumber + '\'' +
                 '}';
     }
 }

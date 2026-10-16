@@ -12,6 +12,7 @@ import FileSharing from "./pages/FileSharing";
 import Groups from "./pages/Groups";
 import GroupChat from "./pages/GroupChat";
 import GroupFiles from "./pages/GroupFiles";
+import UserProfile from "./pages/UserProfile";
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
         <Route path="/verify-otp" element={<VerifyOTP />} />
 
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/profile" element={<UserProfile />} />
 
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/dashboard" element={<AdminDashboard />} />

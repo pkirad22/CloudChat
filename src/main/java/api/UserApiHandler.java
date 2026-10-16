@@ -38,44 +38,50 @@ public class UserApiHandler {
         // GET CURRENT USER
         // =========================================================
 
-        public void handleMe(HttpExchange exchange)
-                        throws IOException {
-
-                if (!exchange.getRequestMethod()
-                                .equalsIgnoreCase("GET")) {
-
-                        sendJson(
-                                        exchange,
-                                        405,
+        public void handleMe(HttpExchange exchange) throws IOException {
+                if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                        sendJson(exchange, 405,
                                         "{\"success\":false,\"message\":\"Method not allowed\"}");
-
                         return;
                 }
 
                 String username = getQueryParameter(
-                                exchange.getRequestURI().getRawQuery(),
-                                "username");
+                                exchange.getRequestURI().getRawQuery(), "username");
+
+                if (username != null) {
+                        username = java.net.URLDecoder.decode(
+                                        username, StandardCharsets.UTF_8);
+                }
 
                 if (username == null || username.trim().isEmpty()) {
-
-                        sendJson(
-                                        exchange,
-                                        400,
+                        sendJson(exchange, 400,
                                         "{\"success\":false,\"message\":\"Username is required\"}");
-
                         return;
                 }
 
-                username = username.trim();
+                try {
+                        org.bson.Document profile = userService.getProfile(username.trim());
 
-                String response = "{"
-                                + "\"success\":true,"
-                                + "\"username\":\""
-                                + escapeJson(username)
-                                + "\""
-                                + "}";
+                        if (profile == null) {
+                                sendJson(exchange, 404,
+                                                "{\"success\":false,\"message\":\"User not found\"}");
+                                return;
+                        }
 
-                sendJson(exchange, 200, response);
+                        String response = "{"
+                                        + "\"success\":true,"
+                                        + "\"username\":\"" + escapeJson(profile.getString("username")) + "\","
+                                        + "\"email\":\"" + escapeJson(profile.getString("email")) + "\","
+                                        + "\"authProvider\":\"" + escapeJson(profile.getString("authProvider")) + "\","
+                                        + "\"hasPassword\":" + profile.getBoolean("hasPassword", false)
+                                        + "}";
+
+                        sendJson(exchange, 200, response);
+                } catch (Exception e) {
+                        e.printStackTrace();
+                        sendJson(exchange, 500,
+                                        "{\"success\":false,\"message\":\"Unable to load user profile\"}");
+                }
         }
 
         // =========================================================

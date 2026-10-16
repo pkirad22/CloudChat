@@ -1,46 +1,100 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Mail } from "lucide-react";
+import { ArrowLeft, Mail, LoaderCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+
+import { sendEmailOtp, verifyEmailOtp } from "../services/api";
 
 function VerifyOTP() {
   const navigate = useNavigate();
 
   const [otp, setOtp] = useState("");
   const [countdown, setCountdown] = useState(60);
+  const [verifying, setVerifying] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState("");
+
+  const email = sessionStorage.getItem("cloudchat_registration_email");
 
   useEffect(() => {
-    if (countdown <= 0) {
-      return;
-    }
+    if (countdown <= 0) return;
 
     const timer = setInterval(() => {
-      setCountdown((current) => current - 1);
+      setCountdown((current) => Math.max(0, current - 1));
     }, 1000);
 
     return () => clearInterval(timer);
   }, [countdown]);
 
-  const handleVerify = (event) => {
+  const handleVerify = async (event) => {
     event.preventDefault();
 
-    if (otp.length !== 6) {
+    if (!email) {
+      setMessage("Registration email not found. Please register again.");
+      setMessageType("error");
       return;
     }
 
-    alert("Email verified successfully!");
+    if (!/^\d{6}$/.test(otp)) {
+      setMessage("Please enter the complete six-digit code.");
+      setMessageType("error");
+      return;
+    }
 
-    navigate("/login");
+    try {
+      setVerifying(true);
+      setMessage("");
+
+      const result = await verifyEmailOtp(email, otp);
+
+      setMessageType("success");
+      setMessage(result.message || "Email verified successfully.");
+
+      sessionStorage.removeItem("cloudchat_registration_email");
+      sessionStorage.removeItem("cloudchat_registration_username");
+
+      setTimeout(() => {
+        navigate("/login", { replace: true });
+      }, 1000);
+    } catch (error) {
+      setMessage(error.message || "Unable to verify the code.");
+      setMessageType("error");
+    } finally {
+      setVerifying(false);
+    }
   };
 
-  const resendOtp = () => {
-    if (countdown > 0) {
+  const resendOtp = async () => {
+    if (countdown > 0 || resending) return;
+
+    if (!email) {
+      setMessage("Registration email not found. Please register again.");
+      setMessageType("error");
       return;
     }
 
-    setOtp("");
-    setCountdown(60);
+    try {
+      setResending(true);
+      setMessage("");
 
-    alert("A new OTP has been sent.");
+      const result = await sendEmailOtp(email);
+
+      setOtp("");
+      setCountdown(60);
+      setMessage(result.message || "A new verification code has been sent.");
+      setMessageType("success");
+    } catch (error) {
+      setMessage(error.message || "Unable to resend the verification code.");
+      setMessageType("error");
+
+      // The backend enforces a 60-second cooldown.
+      // Keep the resend button disabled if a request was too early.
+      if (error.message?.toLowerCase().includes("wait")) {
+        setCountdown(60);
+      }
+    } finally {
+      setResending(false);
+    }
   };
 
   return (
@@ -66,40 +120,62 @@ function VerifyOTP() {
           <div className="otp-heading">
             <h2>Verify your email</h2>
 
-            <p>
-              We've sent a 6-digit verification code to your
-              email address.
-            </p>
+            <p>We've sent a six-digit verification code to:</p>
+
+            <strong>{email || "No registration email found"}</strong>
           </div>
 
           <form onSubmit={handleVerify}>
             <div className="form-group">
-              <label>Verification code</label>
+              <label htmlFor="verification-code">Verification code</label>
 
               <input
+                id="verification-code"
                 className="otp-input"
                 type="text"
                 inputMode="numeric"
+                autoComplete="one-time-code"
                 maxLength={6}
+                pattern="[0-9]{6}"
                 placeholder="000000"
                 value={otp}
-                onChange={(event) =>
-                  setOtp(
-                    event.target.value
-                      .replace(/\D/g, "")
-                      .slice(0, 6)
-                  )
-                }
+                onChange={(event) => {
+                  setOtp(event.target.value.replace(/\D/g, "").slice(0, 6));
+                  setMessage("");
+                }}
                 required
               />
             </div>
 
+            {message && (
+              <p
+                role="status"
+                aria-live="polite"
+                style={{
+                  color: messageType === "success" ? "#4ade80" : "#f87171",
+                  marginBottom: "12px",
+                }}
+              >
+                {message}
+              </p>
+            )}
+
             <button
               type="submit"
               className="login-button"
-              disabled={otp.length !== 6}
+              disabled={otp.length !== 6 || verifying || !email}
             >
-              Verify email
+              {verifying ? (
+                <>
+                  <LoaderCircle
+                    size={17}
+                    className="inline-block animate-spin"
+                  />{" "}
+                  Verifying...
+                </>
+              ) : (
+                "Verify email"
+              )}
             </button>
           </form>
 
@@ -110,11 +186,13 @@ function VerifyOTP() {
               type="button"
               className="forgot"
               onClick={resendOtp}
-              disabled={countdown > 0}
+              disabled={countdown > 0 || resending || !email}
             >
-              {countdown > 0
-                ? `Resend in ${countdown}s`
-                : "Resend code"}
+              {resending
+                ? "Sending..."
+                : countdown > 0
+                  ? `Resend in ${countdown}s`
+                  : "Resend code"}
             </button>
           </div>
         </section>

@@ -29,6 +29,7 @@ import service.GroupFileHistoryService;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import service.GoogleAuthTicketService;
 
 public class ClientHandler implements Runnable {
 
@@ -337,6 +338,89 @@ public class ClientHandler implements Runnable {
 
                                         ChatServer.sendOnlineUsers(
                                                         this);
+                                }
+
+                                // =================================================
+                                // GOOGLE LOGIN
+                                // =================================================
+
+                                else if (authChoice.equals("google_ticket")) {
+
+                                        sendMessage("GOOGLE_TICKET_REQUEST");
+
+                                        String ticket = input.readLine();
+
+                                        if (ticket == null || ticket.trim().isEmpty()) {
+                                                sendMessage("LOGIN_FAILED: Google login ticket is missing.");
+                                                continue;
+                                        }
+
+                                        sendMessage("GOOGLE_SESSION_REQUEST");
+
+                                        String sessionId = input.readLine();
+
+                                        if (sessionId == null || sessionId.trim().isEmpty()) {
+                                                sendMessage("LOGIN_FAILED: Google session is missing.");
+                                                continue;
+                                        }
+
+                                        try {
+                                                GoogleAuthTicketService ticketService = new GoogleAuthTicketService();
+
+                                                boolean validTicket = ticketService.validateTicket(
+                                                                ticket.trim(),
+                                                                sessionId.trim());
+
+                                                if (!validTicket) {
+                                                        sendMessage(
+                                                                        "LOGIN_FAILED: Google login ticket is invalid or expired.");
+                                                        continue;
+                                                }
+
+                                                String googleUsername = ticketService.getUsername(
+                                                                ticket.trim(),
+                                                                sessionId.trim());
+
+                                                if (googleUsername == null || googleUsername.trim().isEmpty()) {
+                                                        sendMessage(
+                                                                        "LOGIN_FAILED: Unable to identify Google user.");
+                                                        continue;
+                                                }
+
+                                                googleUsername = googleUsername.trim();
+
+                                                // Add user to the current chat server.
+                                                if (!ChatServer.addOnlineUser(googleUsername, this)) {
+                                                        sendMessage("ERROR: Username already online.");
+                                                        continue;
+                                                }
+
+                                                username = googleUsername;
+                                                authenticated = true;
+
+                                                // Login success.
+                                                sendMessage("LOGIN_SUCCESS: Welcome " + username + "!");
+
+                                                // Preserve existing offline delivery functionality.
+                                                deliverOfflineMessages();
+                                                deliverOfflineGroupMessages();
+                                                deliverOfflineGroupFiles();
+
+                                                // Notify other users.
+                                                ChatServer.broadcastMessage(
+                                                                "SYSTEM: " + username + " joined the chat.",
+                                                                this);
+
+                                                // Send the current online user list.
+                                                ChatServer.sendOnlineUsers(this);
+
+                                        } catch (Exception e) {
+                                                System.err.println(
+                                                                "[GOOGLE-AUTH] Authentication failed: "
+                                                                                + e.getMessage());
+
+                                                sendMessage("LOGIN_FAILED: Google authentication failed.");
+                                        }
                                 }
 
                                 // =================================================
