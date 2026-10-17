@@ -200,3 +200,63 @@ export async function updateGoogleUsername(credential, newUsername) {
     }),
   });
 }
+
+// =========================================================
+// ADMIN API — USER MANAGEMENT
+// =========================================================
+
+const ADMIN_TOKEN_KEY = "cloudchat_admin_token";
+
+// Retrieve the token created by successful admin login.
+function getAdminToken() {
+  const token = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+
+  if (!token) {
+    throw new Error("Admin session not found. Please log in again.");
+  }
+
+  return token;
+}
+
+// Shared helper for authenticated admin requests.
+async function adminRequest(endpoint, options = {}) {
+  const token = getAdminToken();
+
+  return request(endpoint, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+}
+
+// Get registered users with search and pagination.
+export async function getAdminUsers({
+  search = "",
+  page = 1,
+  pageSize = 10,
+} = {}) {
+  const params = new URLSearchParams({
+    search,
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+
+  return adminRequest(`/api/admin/users?${params.toString()}`);
+}
+
+// Deactivate or reactivate a registered user's account.
+export async function updateAdminUserStatus(username, accountStatus) {
+  if (!["ACTIVE", "DEACTIVATED"].includes(accountStatus)) {
+    throw new Error("Invalid account status.");
+  }
+
+  return adminRequest("/api/admin/users/status", {
+    method: "PUT",
+    body: JSON.stringify({
+      username,
+      accountStatus,
+    }),
+  });
+}

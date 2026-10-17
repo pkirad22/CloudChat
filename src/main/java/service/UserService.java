@@ -18,6 +18,11 @@ import static com.mongodb.client.model.Filters.and;
 import static com.mongodb.client.model.Filters.exists;
 import static com.mongodb.client.model.Filters.or;
 
+import com.mongodb.client.model.Projections;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
 public class UserService {
 
         private final MongoCollection<Document> users;
@@ -67,7 +72,9 @@ public class UserService {
                                                         user.getEmail())
                                         .append("mobileNumber",
                                                         user.getMobileNumber())
-                                        .append("emailVerified", false);
+                                        .append("emailVerified", false)
+                                        .append("authProvider", "PASSWORD")
+                                        .append("createdAt", new Date());
 
                         users.insertOne(document);
 
@@ -87,26 +94,42 @@ public class UserService {
                 }
         }
 
-        public User findOrCreateGoogleUser(GoogleAuthService.GoogleUser googleUser) {
+        public User findOrCreateGoogleUser(
+                        GoogleAuthService.GoogleUser googleUser) {
+
                 if (googleUser == null) {
-                        throw new IllegalArgumentException("Google user is required.");
+                        throw new IllegalArgumentException(
+                                        "Google user is required.");
                 }
 
                 String googleSub = googleUser.getSubject();
+
                 String email = googleUser.getEmail()
                                 .trim()
                                 .toLowerCase(java.util.Locale.ROOT);
 
-                if (googleSub == null || googleSub.trim().isEmpty()
+                if (googleSub == null
+                                || googleSub.trim().isEmpty()
                                 || email.isEmpty()) {
+
                         throw new IllegalArgumentException(
                                         "Valid Google account details are required.");
                 }
 
                 // 1. Find an account already linked to this Google identity.
-                Document linkedUser = users.find(eq("googleSub", googleSub)).first();
+                Document linkedUser = users
+                                .find(eq("googleSub", googleSub))
+                                .first();
 
                 if (linkedUser != null) {
+
+                        // Block Google login for deactivated accounts.
+                        String accountStatus = linkedUser.getString("accountStatus");
+
+                        if ("DEACTIVATED".equalsIgnoreCase(accountStatus)) {
+                                throw new AccountDeactivatedException();
+                        }
+
                         return new User(
                                         linkedUser.getString("username"),
                                         null,
@@ -115,13 +138,23 @@ public class UserService {
                 }
 
                 // 2. Never automatically link Google to an existing email account.
-                java.util.regex.Pattern emailPattern = java.util.regex.Pattern.compile(
-                                "^" + java.util.regex.Pattern.quote(email) + "$",
-                                java.util.regex.Pattern.CASE_INSENSITIVE);
+                Pattern emailPattern = Pattern.compile(
+                                "^" + Pattern.quote(email) + "$",
+                                Pattern.CASE_INSENSITIVE);
 
-                Document existingEmailUser = users.find(new Document("email", emailPattern)).first();
+                Document existingEmailUser = users
+                                .find(new Document("email", emailPattern))
+                                .first();
 
                 if (existingEmailUser != null) {
+
+                        // Also reject a deactivated account found by email.
+                        String accountStatus = existingEmailUser.getString("accountStatus");
+
+                        if ("DEACTIVATED".equalsIgnoreCase(accountStatus)) {
+                                throw new AccountDeactivatedException();
+                        }
+
                         throw new GoogleAccountConflictException(
                                         "An account with this email already exists. "
                                                         + "Please log in using your existing CloudChat account.");
@@ -145,10 +178,11 @@ public class UserService {
                 while (users.find(
                                 new Document(
                                                 "username",
-                                                java.util.regex.Pattern.compile(
-                                                                "^" + java.util.regex.Pattern.quote(username) + "$",
-                                                                java.util.regex.Pattern.CASE_INSENSITIVE)))
+                                                Pattern.compile(
+                                                                "^" + Pattern.quote(username) + "$",
+                                                                Pattern.CASE_INSENSITIVE)))
                                 .first() != null) {
+
                         String ending = "_" + suffix++;
                         int maxBaseLength = 30 - ending.length();
 
@@ -159,20 +193,27 @@ public class UserService {
                         username = shortenedBase + ending;
                 }
 
-                // 4. Create a Google-linked account without a fake password.
-                Document newUser = new Document("username", username)
+                // 4. Create a new Google-linked account.
+                Document newUser = new Document(
+                                "username", username)
                                 .append("email", email)
                                 .append("mobileNumber", null)
                                 .append("emailVerified", true)
                                 .append("googleSub", googleSub)
                                 .append("authProvider", "GOOGLE")
-                                .append("createdAt", new java.util.Date());
+                                .append("accountStatus", "ACTIVE")
+                                .append("createdAt", new Date());
 
                 users.insertOne(newUser);
 
-                System.out.println("Google account created: " + username);
+                System.out.println(
+                                "Google account created: " + username);
 
-                return new User(username, null, email, null);
+                return new User(
+                                username,
+                                null,
+                                email,
+                                null);
         }
 
         public static class GoogleAccountConflictException
@@ -180,6 +221,31 @@ public class UserService {
 
                 public GoogleAccountConflictException(String message) {
                         super(message);
+                }
+        }
+
+        // =========================================================
+        // CHECK WHETHER AN ACCOUNT IS ACTIVE
+        // Legacy accounts without accountStatus are treated as ACTIVE.
+        // =========================================================
+
+        public void ensureAccountActive(String username) {
+
+                if (username == null || username.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Username is required.");
+                }
+
+                Document user = users.find(
+                                eq("username", username.trim())).first();
+
+                if (user == null) {
+                        throw new IllegalArgumentException("CloudChat account was not found.");
+                }
+
+                String accountStatus = user.getString("accountStatus");
+
+                if ("DEACTIVATED".equalsIgnoreCase(accountStatus)) {
+                        throw new AccountDeactivatedException();
                 }
         }
 
@@ -296,6 +362,12 @@ public class UserService {
                 }
         }
 
+        public static class AccountDeactivatedException extends RuntimeException {
+                public AccountDeactivatedException() {
+                        super("Your CloudChat account has been deactivated. Please contact the administrator.");
+                }
+        }
+
         public User loginUser(
                         String username,
                         String password) {
@@ -325,6 +397,14 @@ public class UserService {
                                 return null;
                         }
 
+                        // Reject deactivated accounts.
+                        // Legacy accounts without accountStatus are treated as ACTIVE.
+                        String accountStatus = document.getString("accountStatus");
+
+                        if ("DEACTIVATED".equalsIgnoreCase(accountStatus)) {
+                                throw new AccountDeactivatedException();
+                        }
+
                         // Only check verification after the password is correct.
                         if (!Boolean.TRUE.equals(
                                         document.getBoolean("emailVerified"))) {
@@ -342,7 +422,11 @@ public class UserService {
                         // Let AuthApiHandler return the appropriate response.
                         throw e;
 
-                } catch (Exception e) {
+                } catch (AccountDeactivatedException e) {
+                        throw e;
+                }
+
+                catch (Exception e) {
 
                         System.out.println(
                                         "Login failed: " + e.getMessage());
@@ -622,6 +706,141 @@ public class UserService {
                                 new Document("$set", new Document("username", newUsername)));
 
                 return result.getModifiedCount() == 1;
+        }
+
+        // =========================================================
+        // ADMIN: LIST REGISTERED USERS SAFELY
+        // Excludes password hashes and authentication secrets.
+        // =========================================================
+
+        public Document getAdminUsers(
+                        String searchText,
+                        int page,
+                        int pageSize) {
+
+                int safePage = Math.max(1, page);
+                int safePageSize = Math.max(1, Math.min(pageSize, 100));
+
+                String search = searchText == null ? "" : searchText.trim();
+
+                org.bson.conversions.Bson filter = new Document();
+
+                if (!search.isEmpty()) {
+                        Pattern searchPattern = Pattern.compile(
+                                        Pattern.quote(search),
+                                        Pattern.CASE_INSENSITIVE);
+
+                        filter = or(
+                                        new Document("username", searchPattern),
+                                        new Document("email", searchPattern),
+                                        new Document("mobileNumber", searchPattern));
+                }
+
+                long total = users.countDocuments(filter);
+
+                List<Document> safeUsers = new ArrayList<>();
+
+                for (Document user : users.find(filter)
+                                .projection(Projections.include(
+                                                "username",
+                                                "email",
+                                                "mobileNumber",
+                                                "emailVerified",
+                                                "authProvider",
+                                                "createdAt",
+                                                "accountStatus"))
+                                .sort(new Document("username", 1))
+                                .skip((safePage - 1) * safePageSize)
+                                .limit(safePageSize)) {
+
+                        String provider = user.getString("authProvider");
+
+                        if (provider == null || provider.isBlank()) {
+                                provider = "PASSWORD";
+                        }
+
+                        Document safeUser = new Document()
+                                        .append("username", user.getString("username"))
+                                        .append("email", user.getString("email"))
+                                        .append("mobileNumber", user.getString("mobileNumber"))
+                                        .append("emailVerified",
+                                                        Boolean.TRUE.equals(user.getBoolean("emailVerified")))
+                                        .append("authProvider", provider)
+                                        .append("accountStatus",
+                                                        "DEACTIVATED".equalsIgnoreCase(
+                                                                        user.getString("accountStatus"))
+                                                                                        ? "DEACTIVATED"
+                                                                                        : "ACTIVE");
+                        ;
+
+                        Object createdAt = user.get("createdAt");
+
+                        if (createdAt instanceof Date) {
+                                safeUser.append("createdAt", createdAt);
+                        } else {
+                                safeUser.append("createdAt", null);
+                        }
+
+                        safeUsers.add(safeUser);
+                }
+
+                int totalPages = (int) Math.ceil(
+                                (double) total / safePageSize);
+
+                return new Document("users", safeUsers)
+                                .append("total", total)
+                                .append("page", safePage)
+                                .append("pageSize", safePageSize)
+                                .append("totalPages", totalPages);
+        }
+
+        // =========================================================
+        // ADMIN: DEACTIVATE / REACTIVATE USER
+        // =========================================================
+
+        public boolean updateAccountStatus(String username, String status) {
+                if (username == null || username.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Username is required.");
+                }
+
+                if (status == null) {
+                        throw new IllegalArgumentException(
+                                        "Status must be ACTIVE or DEACTIVATED.");
+                }
+
+                String normalizedStatus = status.trim().toUpperCase(
+                                java.util.Locale.ROOT);
+
+                if (!normalizedStatus.equals("ACTIVE")
+                                && !normalizedStatus.equals("DEACTIVATED")) {
+                        throw new IllegalArgumentException(
+                                        "Status must be ACTIVE or DEACTIVATED.");
+                }
+
+                UpdateResult result = users.updateOne(
+                                eq("username", username.trim()),
+                                new Document("$set",
+                                                new Document("accountStatus", normalizedStatus)
+                                                                .append("statusUpdatedAt", new Date())));
+
+                return result.getMatchedCount() == 1;
+        }
+
+        // =========================================================
+        // ADMIN: REMOVE USER ACCOUNT
+        // Note: This deletes only the user document.
+        // Associated chats and files are not deleted.
+        // =========================================================
+
+        public boolean removeUserAccount(String username) {
+
+                if (username == null || username.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Username is required.");
+                }
+
+                com.mongodb.client.result.DeleteResult result = users.deleteOne(eq("username", username.trim()));
+
+                return result.getDeletedCount() == 1;
         }
 
 }

@@ -119,7 +119,9 @@ public class AuthApiHandler {
                         throws IOException {
 
                 if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                        sendJson(exchange, 405,
+                        sendJson(
+                                        exchange,
+                                        405,
                                         "{\"success\":false,\"message\":\"Method not allowed\"}");
                         return;
                 }
@@ -129,7 +131,9 @@ public class AuthApiHandler {
                         String credential = extractJsonValue(requestBody, "credential");
 
                         if (credential == null || credential.trim().isEmpty()) {
-                                sendJson(exchange, 400,
+                                sendJson(
+                                                exchange,
+                                                400,
                                                 "{\"success\":false,\"message\":\"Google credential is required\"}");
                                 return;
                         }
@@ -137,9 +141,10 @@ public class AuthApiHandler {
                         // Verify the Google ID token on the backend.
                         GoogleAuthService.GoogleUser googleUser = googleAuthService.verifyIdToken(credential);
 
-                        // Find the linked account or create a new verified account.
+                        // Reject deactivated accounts before issuing a login ticket.
                         User loggedInUser = userService.findOrCreateGoogleUser(googleUser);
 
+                        // Create a ticket only after the account has been accepted.
                         GoogleAuthTicketService.Ticket ticket = googleAuthTicketService.createTicket(
                                         loggedInUser.getUsername());
 
@@ -162,28 +167,46 @@ public class AuthApiHandler {
 
                         sendJson(exchange, 200, response);
 
+                } catch (UserService.AccountDeactivatedException e) {
+
+                        // HTTP 403: account exists but access has been disabled.
+                        sendJson(
+                                        exchange,
+                                        403,
+                                        "{\"success\":false,\"message\":\"Your CloudChat account has been deactivated. Please contact the administrator.\"}");
+
                 } catch (UserService.GoogleAccountConflictException e) {
 
-                        sendJson(exchange, 409,
+                        sendJson(
+                                        exchange,
+                                        409,
                                         "{\"success\":false,\"message\":\""
-                                                        + escapeJson(e.getMessage()) + "\"}");
+                                                        + escapeJson(e.getMessage())
+                                                        + "\"}");
 
                 } catch (SecurityException e) {
 
-                        sendJson(exchange, 401,
+                        sendJson(
+                                        exchange,
+                                        401,
                                         "{\"success\":false,\"message\":\"Google verification failed. Please try again.\"}");
 
                 } catch (IllegalArgumentException e) {
 
-                        sendJson(exchange, 400,
+                        sendJson(
+                                        exchange,
+                                        400,
                                         "{\"success\":false,\"message\":\""
-                                                        + escapeJson(e.getMessage()) + "\"}");
+                                                        + escapeJson(e.getMessage())
+                                                        + "\"}");
 
                 } catch (Exception e) {
 
                         e.printStackTrace();
 
-                        sendJson(exchange, 500,
+                        sendJson(
+                                        exchange,
+                                        500,
                                         "{\"success\":false,\"message\":\"Google login failed\"}");
                 }
         }

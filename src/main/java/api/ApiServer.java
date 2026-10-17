@@ -24,6 +24,7 @@ public class ApiServer {
         private GroupApiHandler groupApiHandler;
         private MessageApiHandler messageApiHandler;
         private GroupFileHistoryApiHandler groupFileHistoryApiHandler;
+        private AdminApiHandler adminApiHandler;
 
         public void start() throws IOException {
 
@@ -40,6 +41,7 @@ public class ApiServer {
                 groupApiHandler = new GroupApiHandler();
                 messageApiHandler = new MessageApiHandler();
                 groupFileHistoryApiHandler = new GroupFileHistoryApiHandler();
+                adminApiHandler = new AdminApiHandler();
 
                 // =====================================================
                 // HEALTH CHECK
@@ -297,6 +299,63 @@ public class ApiServer {
                 server.createContext(
                                 "/api/users/google/update-username",
                                 withCors(authApiHandler::handleGoogleUpdateUsername));
+
+                // =========================================================
+                // ADMIN AUTHENTICATION
+                // =========================================================
+
+                server.createContext(
+                                "/api/admin/login",
+                                withCors(adminApiHandler::handleLogin));
+
+                server.createContext(
+                                "/api/admin/session",
+                                withCors(adminApiHandler::handleSession));
+
+                server.createContext(
+                                "/api/admin/logout",
+                                withCors(adminApiHandler::handleLogout));
+
+                // =========================================================
+                // ADMIN AUTHENTICATION
+                // =========================================================
+
+                server.createContext(
+                                "/api/admin/login",
+                                withCors(adminApiHandler::handleLogin));
+
+                server.createContext(
+                                "/api/admin/session",
+                                withCors(adminApiHandler::handleSession));
+
+                server.createContext(
+                                "/api/admin/logout",
+                                withCors(adminApiHandler::handleLogout));
+
+                // =========================================================
+                // ADMIN — USER MANAGEMENT
+                // =========================================================
+
+                server.createContext(
+                                "/api/admin/users",
+                                withCors(adminApiHandler::handleUsers));
+
+                // =========================================================
+                // ADMIN — DEACTIVATE / REACTIVATE USER
+                // =========================================================
+
+                server.createContext(
+                                "/api/admin/users/status",
+                                withCors(adminApiHandler::handleUpdateUserStatus));
+
+                // =========================================================
+                // ADMIN — REMOVE USER ACCOUNT
+                // Add this after safe deletion handling is implemented.
+                // =========================================================
+
+                // server.createContext(
+                // "/api/admin/users/account",
+                // withCors(adminApiHandler::handleRemoveUser));
 
                 // =====================================================
                 // START SERVER

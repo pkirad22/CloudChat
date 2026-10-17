@@ -1,12 +1,12 @@
 package server;
 
 import java.io.BufferedReader;
-import java.io.DataOutputStream;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.ServerSocket;
+
 import java.net.Socket;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -382,14 +382,21 @@ public class ClientHandler implements Runnable {
                                                                 sessionId.trim());
 
                                                 if (googleUsername == null || googleUsername.trim().isEmpty()) {
-                                                        sendMessage(
-                                                                        "LOGIN_FAILED: Unable to identify Google user.");
+                                                        sendMessage("LOGIN_FAILED: Unable to identify Google user.");
                                                         continue;
                                                 }
 
                                                 googleUsername = googleUsername.trim();
 
-                                                // Add user to the current chat server.
+                                                // Check the latest account status in MongoDB before allowing login.
+                                                try {
+                                                        userService.ensureAccountActive(googleUsername);
+                                                } catch (UserService.AccountDeactivatedException e) {
+                                                        sendMessage("LOGIN_FAILED: " + e.getMessage());
+                                                        continue;
+                                                }
+
+                                                // Add user to current chat server.
                                                 if (!ChatServer.addOnlineUser(googleUsername, this)) {
                                                         sendMessage("ERROR: Username already online.");
                                                         continue;
@@ -1326,9 +1333,7 @@ public class ClientHandler implements Runnable {
                 // SAVE PERMANENT GROUP FILE HISTORY
                 // =========================================================
 
-                try {
-
-                        GroupFileHistoryService historyService = new GroupFileHistoryService();
+                try (GroupFileHistoryService historyService = new GroupFileHistoryService()) {
 
                         org.bson.Document savedRecord = historyService.saveGroupFile(
                                         transferId,
@@ -3719,5 +3724,32 @@ public class ClientHandler implements Runnable {
 
                 return Set.copyOf(
                                 remoteJoinedGroups);
+        }
+
+        // =========================================================
+        // ADMIN — FORCE DISCONNECT USER
+        // =========================================================
+
+        public void forceDisconnect(String reason) {
+
+                if (clientSocket == null || clientSocket.isClosed()) {
+                        return;
+                }
+
+                String safeReason = (reason == null || reason.trim().isEmpty())
+                                ? "Your CloudChat account has been deactivated. Please contact the administrator."
+                                : reason.trim();
+
+                try {
+                        sendMessage("ACCOUNT_DEACTIVATED: " + safeReason);
+                } catch (Exception e) {
+                        System.err.println(
+                                        "[ADMIN] Could not notify user: " + e.getMessage());
+                }
+
+                System.out.println(
+                                "[ADMIN] Disconnecting active user: " + username);
+
+                closeConnection();
         }
 }

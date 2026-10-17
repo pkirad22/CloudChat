@@ -283,16 +283,14 @@ public class MonitoringApiServer {
         // OFFLINE PEER RESPONSE
         // =========================================================
 
-        private String createOfflinePeerResponse(
-                        String reason) {
+        private String createOfflinePeerResponse(String reason) {
 
                 return "{"
                                 + "\"serverId\":\""
                                 + escapeJson(
-                                                monitoringService
-                                                                .getCurrentStatus()
-                                                                .getPeerServer())
+                                                monitoringService.getCurrentStatus().getPeerServer())
                                 + "\","
+
                                 + "\"status\":\"OFFLINE\","
                                 + "\"load\":0,"
                                 + "\"loadLevel\":\"OFFLINE\","
@@ -303,6 +301,12 @@ public class MonitoringApiServer {
                                 + "\"groups\":0,"
                                 + "\"connectedToPeer\":false,"
                                 + "\"peerServer\":\"\","
+
+                                // Heartbeat monitoring
+                                + "\"heartbeatStatus\":\"DISCONNECTED\","
+                                + "\"lastHeartbeatResponseAt\":0,"
+                                + "\"heartbeatAgeMillis\":-1,"
+
                                 + "\"reason\":\""
                                 + escapeJson(reason)
                                 + "\""
@@ -313,18 +317,15 @@ public class MonitoringApiServer {
         // CONVERT STATUS TO JSON
         // =========================================================
 
-        private String convertToJson(
-                        ServerStatus status) {
+        private String convertToJson(ServerStatus status) {
 
                 return "{"
                                 + "\"serverId\":\""
-                                + escapeJson(
-                                                status.getServerId())
+                                + escapeJson(status.getServerId())
                                 + "\","
 
                                 + "\"status\":\""
-                                + escapeJson(
-                                                status.getStatus())
+                                + escapeJson(status.getStatus())
                                 + "\","
 
                                 + "\"load\":"
@@ -332,8 +333,7 @@ public class MonitoringApiServer {
                                 + ","
 
                                 + "\"loadLevel\":\""
-                                + escapeJson(
-                                                status.getLoadLevel())
+                                + escapeJson(status.getLoadLevel())
                                 + "\","
 
                                 + "\"cpuUsage\":"
@@ -361,9 +361,20 @@ public class MonitoringApiServer {
                                 + ","
 
                                 + "\"peerServer\":\""
-                                + escapeJson(
-                                                status.getPeerServer())
-                                + "\""
+                                + escapeJson(status.getPeerServer())
+                                + "\","
+
+                                // Heartbeat monitoring fields
+                                + "\"heartbeatStatus\":\""
+                                + escapeJson(status.getHeartbeatStatus())
+                                + "\","
+
+                                + "\"lastHeartbeatResponseAt\":"
+                                + status.getLastHeartbeatResponseAt()
+                                + ","
+
+                                + "\"heartbeatAgeMillis\":"
+                                + status.getHeartbeatAgeMillis()
 
                                 + "}";
         }
@@ -375,17 +386,32 @@ public class MonitoringApiServer {
         private void sendResponse(
                         HttpExchange exchange,
                         int statusCode,
-                        String response)
-                        throws IOException {
+                        String response) throws IOException {
 
-                byte[] responseBytes = response.getBytes("UTF-8");
+                exchange.getResponseHeaders().set(
+                                "Content-Type",
+                                "application/json; charset=UTF-8");
+
+                exchange.getResponseHeaders().set(
+                                "Access-Control-Allow-Origin",
+                                "http://localhost:5173");
+
+                exchange.getResponseHeaders().set(
+                                "Access-Control-Allow-Methods",
+                                "GET, OPTIONS");
+
+                exchange.getResponseHeaders().set(
+                                "Access-Control-Allow-Headers",
+                                "Content-Type, Authorization");
+
+                byte[] responseBytes = response.getBytes(
+                                java.nio.charset.StandardCharsets.UTF_8);
 
                 exchange.sendResponseHeaders(
                                 statusCode,
                                 responseBytes.length);
 
                 try (OutputStream outputStream = exchange.getResponseBody()) {
-
                         outputStream.write(responseBytes);
                 }
         }

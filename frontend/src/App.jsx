@@ -4,7 +4,7 @@ import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import VerifyOTP from "./pages/VerifyOTP";
-import AdminLogin from "./pages/AdminLogin";
+import AdminLogin from "./admin/AdminLogin";
 import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./admin/AdminDashboard";
 import Chat from "./pages/Chat";
@@ -13,6 +13,7 @@ import Groups from "./pages/Groups";
 import GroupChat from "./pages/GroupChat";
 import GroupFiles from "./pages/GroupFiles";
 import UserProfile from "./pages/UserProfile";
+import AdminProtectedRoute from "./components/AdminProtectedRoute";
 
 function App() {
   return (
@@ -27,7 +28,10 @@ function App() {
         <Route path="/profile" element={<UserProfile />} />
 
         <Route path="/admin/login" element={<AdminLogin />} />
-        <Route path="/admin/dashboard" element={<AdminDashboard />} />
+
+        <Route element={<AdminProtectedRoute />}>
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        </Route>
 
         <Route path="/chat" element={<Chat />} />
         <Route path="/file-sharing" element={<FileSharing />} />

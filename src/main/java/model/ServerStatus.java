@@ -14,6 +14,10 @@ public class ServerStatus {
     private boolean connectedToPeer;
     private String peerServer;
 
+    private String heartbeatStatus;
+    private long lastHeartbeatResponseAt;
+    private long heartbeatAgeMillis;
+
     public ServerStatus() {
     }
 
@@ -129,5 +133,29 @@ public class ServerStatus {
 
     public void setPeerServer(String peerServer) {
         this.peerServer = peerServer;
+    }
+
+    public String getHeartbeatStatus() {
+        return heartbeatStatus;
+    }
+
+    public void setHeartbeatStatus(String heartbeatStatus) {
+        this.heartbeatStatus = heartbeatStatus;
+    }
+
+    public long getLastHeartbeatResponseAt() {
+        return lastHeartbeatResponseAt;
+    }
+
+    public void setLastHeartbeatResponseAt(long lastHeartbeatResponseAt) {
+        this.lastHeartbeatResponseAt = lastHeartbeatResponseAt;
+    }
+
+    public long getHeartbeatAgeMillis() {
+        return heartbeatAgeMillis;
+    }
+
+    public void setHeartbeatAgeMillis(long heartbeatAgeMillis) {
+        this.heartbeatAgeMillis = heartbeatAgeMillis;
     }
 }

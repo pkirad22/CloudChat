@@ -45,6 +45,21 @@ public class ServerSynchronizer {
         private volatile boolean connected = false;
 
         // =========================================================
+        // HEARTBEAT MONITORING
+        // =========================================================
+
+        private static final long HEARTBEAT_TIMEOUT_MS = 15_000L;
+
+        // Time when the current synchronization connection was established.
+        private volatile long connectionEstablishedAt = 0L;
+
+        // Time when the last PONG response was received.
+        private volatile long lastHeartbeatResponseAt = 0L;
+
+        // Time when the last PING was sent.
+        private volatile long lastHeartbeatSentAt = 0L;
+
+        // =========================================================
         // REMOTE STATE
         // =========================================================
 
@@ -240,6 +255,10 @@ public class ServerSynchronizer {
 
                 connected = true;
 
+                connectionEstablishedAt = System.currentTimeMillis();
+                lastHeartbeatResponseAt = 0L;
+                lastHeartbeatSentAt = 0L;
+
                 // -----------------------------------------------------
                 // Identify server
                 // -----------------------------------------------------
@@ -347,6 +366,8 @@ public class ServerSynchronizer {
 
                 if (message.equals("PONG")) {
 
+                        lastHeartbeatResponseAt = System.currentTimeMillis();
+
                         return;
                 }
 
@@ -419,6 +440,44 @@ public class ServerSynchronizer {
 
                                 System.out.println(
                                                 "[SYNC] Remote user OFFLINE: "
+                                                                + username);
+                        }
+
+                        return;
+                }
+
+                // =====================================================
+                // ADMIN FORCE DISCONNECT
+                // =====================================================
+
+                if (message.startsWith("ADMIN_DISCONNECT_USER:")) {
+
+                        String[] parts = message.split(":", 3);
+
+                        if (parts.length < 3) {
+                                System.err.println(
+                                                "[ADMIN] Invalid ADMIN_DISCONNECT_USER message.");
+                                return;
+                        }
+
+                        String username = parts[1].trim();
+                        String reason = parts[2].trim();
+
+                        if (username.isEmpty()) {
+                                return;
+                        }
+
+                        System.out.println(
+                                        "[ADMIN] Force-disconnect request received for: "
+                                                        + username);
+
+                        ClientHandler handler = ChatServer.getOnlineUser(username);
+
+                        if (handler != null) {
+                                handler.forceDisconnect(reason);
+                        } else {
+                                System.out.println(
+                                                "[ADMIN] User is not connected to this server: "
                                                                 + username);
                         }
 
@@ -1969,6 +2028,8 @@ public class ServerSynchronizer {
 
                 if (connected) {
 
+                        lastHeartbeatSentAt = System.currentTimeMillis();
+
                         send("PING");
                 }
         }
@@ -2059,6 +2120,63 @@ public class ServerSynchronizer {
         public boolean isConnected() {
 
                 return connected;
+        }
+
+        // =========================================================
+        // HEARTBEAT HEALTH
+        // =========================================================
+
+        public String getHeartbeatStatus() {
+
+                if (!connected) {
+                        return "DISCONNECTED";
+                }
+
+                long now = System.currentTimeMillis();
+
+                // No PONG has arrived yet on the current connection.
+                if (lastHeartbeatResponseAt == 0L) {
+
+                        if (connectionEstablishedAt > 0L
+                                        && now - connectionEstablishedAt > HEARTBEAT_TIMEOUT_MS) {
+                                return "STALE";
+                        }
+
+                        return "WAITING";
+                }
+
+                long elapsed = now - lastHeartbeatResponseAt;
+
+                return elapsed <= HEARTBEAT_TIMEOUT_MS
+                                ? "HEALTHY"
+                                : "STALE";
+        }
+
+        public boolean isHeartbeatHealthy() {
+
+                return "HEALTHY".equals(getHeartbeatStatus());
+        }
+
+        public long getLastHeartbeatResponseAt() {
+
+                return lastHeartbeatResponseAt;
+        }
+
+        public long getHeartbeatAgeMillis() {
+
+                if (lastHeartbeatResponseAt == 0L) {
+                        return -1L;
+                }
+
+                return Math.max(
+                                0L,
+                                System.currentTimeMillis()
+                                                - lastHeartbeatResponseAt);
+        }
+
+        public long getLastHeartbeatSentAt() {
+
+                return lastHeartbeatSentAt;
         }
 
         public boolean sendFileRouteRequest(
@@ -2453,6 +2571,44 @@ public class ServerSynchronizer {
                 }
 
                 return remoteOnlineUsers.contains(username.trim());
+        }
+
+        // =========================================================
+        // SEND ADMIN FORCE-DISCONNECT REQUEST
+        // =========================================================
+
+        public boolean sendAdminDisconnectUser(
+                        String username,
+                        String reason) {
+
+                if (!connected) {
+                        System.err.println(
+                                        "[ADMIN] Cannot send disconnect request: "
+                                                        + "synchronization is unavailable.");
+                        return false;
+                }
+
+                if (username == null || username.trim().isEmpty()) {
+                        return false;
+                }
+
+                String cleanUsername = username.trim();
+
+                String cleanReason = reason == null
+                                ? "Your account has been deactivated."
+                                : reason.replace(":", "-").trim();
+
+                send(
+                                "ADMIN_DISCONNECT_USER:"
+                                                + cleanUsername
+                                                + ":"
+                                                + cleanReason);
+
+                System.out.println(
+                                "[ADMIN] Disconnect request sent for: "
+                                                + cleanUsername);
+
+                return true;
         }
 
         // =========================================================
