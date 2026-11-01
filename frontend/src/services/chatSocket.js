@@ -5,13 +5,9 @@ import {
   closeWebSocket,
 } from "./websocket";
 
-import {
-  saveReceivedFile,
-  getStoredFilesForUser,
-  getStoredGroupFilesForUser,
-} from "./receivedFileStore";
+import { saveReceivedFile, getStoredFilesForUser } from "./receivedFileStore";
 
-const WS_URL = "ws://localhost:9001";
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:9001";
 
 let socket = null;
 
@@ -20,8 +16,6 @@ let currentChatUsername = "";
 // =========================================================
 // GOOGLE AUTHENTICATION STATE
 // =========================================================
-
-let googleAuthCredentials = null;
 
 // =========================================================
 // ACTIVE SERVER TRACKING
