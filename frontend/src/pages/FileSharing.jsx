@@ -17,6 +17,7 @@ import {
 import { getOnlineUsers, searchUsers } from "../services/api";
 
 import {
+  disconnectChat,
   isChatConnected,
   onChatClosed,
   onChatMessage,
@@ -742,8 +743,13 @@ function FileSharing() {
   // =========================================================
 
   const handleLogout = () => {
+    // Close the active chat connection and clean up its state.
+    disconnectChat();
+
+    // Clear the authenticated user's session.
     sessionStorage.removeItem("cloudchat_username");
 
+    // Redirect to login.
     navigate("/login", {
       replace: true,
     });

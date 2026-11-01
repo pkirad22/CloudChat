@@ -401,6 +401,7 @@ export default function GroupChat() {
       // =====================================================
 
       if (message === "==========================================") {
+        historyRequestedRef.current = false;
         setLoadingHistory(false);
         return;
       }
@@ -519,6 +520,8 @@ export default function GroupChat() {
     }
 
     if (!isChatConnected()) {
+      setConnected(false);
+      setError("Chat server is disconnected. Please reconnect and try again.");
       return;
     }
 
@@ -527,14 +530,15 @@ export default function GroupChat() {
     }
 
     historyRequestedRef.current = true;
-
     setLoadingHistory(true);
+    setError("");
 
     console.log("[GROUP CHAT] Loading history:", selectedGroup);
 
     sendChatCommand(`/grouphistory ${selectedGroup}`);
 
     setTimeout(() => {
+      historyRequestedRef.current = false;
       setLoadingHistory(false);
     }, 5000);
   }, [selectedGroup]);
@@ -681,16 +685,32 @@ export default function GroupChat() {
 
   const refreshHistory = useCallback(() => {
     if (!selectedGroup) {
+      setError("No group selected.");
       return;
     }
 
-    setMessages([]);
+    if (!isChatConnected()) {
+      setConnected(false);
+      setError("Chat server is disconnected. Please reconnect and try again.");
+      return;
+    }
 
-    historyRequestedRef.current = false;
+    // Mark history as requested before the server responds.
+    historyRequestedRef.current = true;
 
     setLoadingHistory(true);
+    setError("");
+    setMessages([]);
+
+    console.log("[GROUP CHAT] Refreshing history:", selectedGroup);
 
     sendChatCommand(`/grouphistory ${selectedGroup}`);
+
+    // Prevent the loading indicator from remaining indefinitely.
+    setTimeout(() => {
+      historyRequestedRef.current = false;
+      setLoadingHistory(false);
+    }, 5000);
   }, [selectedGroup]);
 
   // =========================================================

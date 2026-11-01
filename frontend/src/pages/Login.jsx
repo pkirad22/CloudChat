@@ -288,7 +288,7 @@ function Login() {
 
             <form onSubmit={handleLogin}>
               <div className="form-group login-form-group">
-                <label htmlFor="login-username">Email or username</label>
+                <label htmlFor="login-username">Enter Username</label>
 
                 <div className="input-icon-wrapper login-input">
                   <input
